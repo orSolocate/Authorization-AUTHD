@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 /// These are all the functions that will be called from the client, but they will be implemented by the server as well
-interface IERC20Authorized
+interface IERC20Authorized is IERC20
 {
     /// Should be called by owner
-    function authorize(address authorizer, uint256 cap) external;
+    function authorize(address addr, address authorized, uint256 cap) external;
+
+    function getAuthorizerCap(address addr, address owner, address authorized) view external returns (uint256);
 
     function increaseAuthorizerCap(address authorizer, uint256 addedCap) external;
 
     function decreaseAuthorizerCap(address authorizer, uint256 subtractedCap) external;
 
     function revokeAuthorizer(address authorizer) external;
-
-    /// This is the read function
-    function AuthorizedCap(address authorizer) external;
 
     /// Should be called by authorizer
     function approveFor(address owner, address spender, uint256 amount) external;

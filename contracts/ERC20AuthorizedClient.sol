@@ -14,9 +14,10 @@ abstract contract ERC20AuthorizedClient is IERC20Authorized, ERC20
     }
 
     /// client authorize docstring
-    function authorize(address authorizer, uint256 cap) public
+    function authorize(address authorized, uint256 cap) public
     {
-        IERC20Authorized(authorizationServerAddr).authorize(authorizer, cap);
+        IERC20Authorized(authorizationServerAddr).authorize(
+            address(this), authorized, cap);
     }
 
 }
