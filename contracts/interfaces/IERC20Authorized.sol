@@ -9,15 +9,17 @@ interface IERC20Authorized is IERC20
     /// Should be called by owner
     function authorize(address addr, address authorized, uint256 cap) external;
 
-    function getAuthorizerCap(address addr, address owner, address authorized) view external returns (uint256);
+    function getAuthorizedCap(address addr, address owner, address authorized) view external returns (uint256);
 
-    function increaseAuthorizerCap(address authorizer, uint256 addedCap) external;
+    function increaseAuthorizedCap(address addr, address authorized, uint256 addedCap) external;
 
-    function decreaseAuthorizerCap(address authorizer, uint256 subtractedCap) external;
+    function decreaseAuthorizedCap(address addr, address authorized, uint256 subtractedCap) external;
 
-    function revokeAuthorizer(address authorizer) external;
+    function isAuthorizedByMe(address addr, address authorized) external view returns (bool);
 
-    /// Should be called by authorizer
+    function revokeAuthorization(address addr, address authorized) external;
+
+    /// Should be called by authorized
     function approveFor(address owner, address spender, uint256 amount) external;
 
     // Supports approving multiple spenders in a single transaction
