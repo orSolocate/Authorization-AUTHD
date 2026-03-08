@@ -7,6 +7,9 @@ import {ERC20Authorized} from "../contracts/ERC20Authorized.sol";
 interface IERC20AuthorizedEvents
 {
     event Authorization(address indexed, address indexed, address, uint256);
+    event RevokeAuthorization(address indexed, address indexed, address);
+    event IncreaseAuthorizedCap(address indexed, address indexed, address, uint256);
+    event DecreaseAuthorizedCap(address indexed, address indexed, address, uint256);
 }
 
 contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
@@ -26,9 +29,13 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         // more setup to register ERC20AuthorizedTest
     }
 
+    // MIGHT BE USEFUL later:
+    //        customToken1.transfer(owner, 50);
+    //        assertEq(customToken1.balanceOf(owner), 50);
+
     function test_selfAuthorize() external
     {
-        customToken1.transfer(owner, 50);
+        deal(address(customToken1), owner, 50);
         assertEq(customToken1.balanceOf(owner), 50);
         vm.prank(owner);
         // Trying to self authorize
@@ -38,8 +45,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_authorizeMoreThanBalance() external
     {
-        customToken1.transfer(owner, 50);
-        assertEq(customToken1.balanceOf(owner), 50);
+        deal(address(customToken1), owner, 50);
         vm.prank(owner);
         // Not enough tokens to authorize
         vm.expectRevert();
@@ -48,8 +54,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_authorizeEmptyCap() external
     {
-        customToken1.transfer(owner, 50);
-        assertEq(customToken1.balanceOf(owner), 50);
+        deal(address(customToken1), owner, 50);
         vm.prank(owner);
         // Not enough tokens to authorize
         vm.expectRevert();
@@ -58,8 +63,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_authorizeTwice() external
     {
-        customToken1.transfer(owner, 50);
-        assertEq(customToken1.balanceOf(owner), 50);
+        deal(address(customToken1), owner, 50);
         vm.prank(owner);
         erc20Authorized.authorize(address(customToken1), authorized1, 20);
         // Verify cannot authorize twice
@@ -70,8 +74,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_authorize() external
     {
-        customToken1.transfer(owner, 50);
-        assertEq(customToken1.balanceOf(owner), 50);
+        deal(address(customToken1), owner, 50);
         vm.prank(owner);
         erc20Authorized.authorize(address(customToken1), authorized1, 50);
         // Verify cap updates
@@ -82,8 +85,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_authorizeEventEmitted() external
     {
-        customToken1.transfer(owner, 50);
-        assertEq(customToken1.balanceOf(owner), 50);
+        deal(address(customToken1), owner, 50);
         vm.prank(owner);
         vm.expectEmit(true, true, false, true);
         emit Authorization(address(customToken1), owner, authorized1, 50);
@@ -92,8 +94,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_authorizeDouble() external
     {
-        customToken1.transfer(owner, 100);
-        assertEq(customToken1.balanceOf(owner), 100);
+        deal(address(customToken1), owner, 100);
         vm.prank(owner);
         erc20Authorized.authorize(address(customToken1), authorized1, 60);
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 60, "Cap should updated after authorizing");
@@ -106,8 +107,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_revokeUnauthorized() external
     {
-        customToken1.transfer(owner, 50);
-        assertEq(customToken1.balanceOf(owner), 50);
+        deal(address(customToken1), owner, 50);
         vm.prank(owner);
         vm.expectRevert();
         erc20Authorized.revokeAuthorization(address(customToken1), authorized1);
@@ -115,13 +115,14 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_revokeAuthorization() external
     {
-        customToken1.transfer(owner, 50);
-        assertEq(customToken1.balanceOf(owner), 50);
+        deal(address(customToken1), owner, 50);
         vm.startPrank(owner);
         erc20Authorized.authorize(address(customToken1), authorized1, 50);
         assertTrue(erc20Authorized.isAuthorizedByMe(address(customToken1), authorized1));
 
         // Verify revoke works
+        vm.expectEmit(true, true, false, true);
+        emit RevokeAuthorization(address(customToken1), owner, authorized1);
         erc20Authorized.revokeAuthorization(address(customToken1), authorized1);
         assertFalse(erc20Authorized.isAuthorizedByMe(address(customToken1), authorized1));
 
@@ -133,8 +134,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_revokeTwice() external
     {
-        customToken1.transfer(owner, 50);
-        assertEq(customToken1.balanceOf(owner), 50);
+        deal(address(customToken1), owner, 50);
         vm.startPrank(owner);
         erc20Authorized.authorize(address(customToken1), authorized1, 50);
         erc20Authorized.revokeAuthorization(address(customToken1), authorized1);
@@ -144,9 +144,9 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_authorizedOnTwoAddresses() external
     {
-        customToken1.transfer(owner, 100);
+        deal(address(customToken1), owner, 100);
         assertEq(customToken1.balanceOf(owner), 100);
-        customToken2.transfer(owner, 200);
+        deal(address(customToken2), owner, 200);
         assertEq(customToken2.balanceOf(owner), 200);
 
         // Authorization effects only the customToken it was authorized on
@@ -185,9 +185,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_increaseUnauthorized() external
     {
-        customToken1.transfer(owner, 100);
-        assertEq(customToken1.balanceOf(owner), 100);
-
+        deal(address(customToken1), owner, 100);
         vm.startPrank(owner);
         vm.expectRevert();
         erc20Authorized.increaseAuthorizedCap(address(customToken1), authorized1, 50);
@@ -200,13 +198,10 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_decreaseUnauthorized() external
     {
-        customToken1.transfer(owner, 100);
-        assertEq(customToken1.balanceOf(owner), 100);
-
-        vm.prank(owner);
+        deal(address(customToken1), owner, 100);
+        vm.startPrank(owner);
         vm.expectRevert();
         erc20Authorized.decreaseAuthorizedCap(address(customToken1), authorized1, 50);
-
         erc20Authorized.authorize(address(customToken1), authorized1, 100);
         erc20Authorized.revokeAuthorization(address(customToken1), authorized1);
         vm.expectRevert();
@@ -215,9 +210,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_increaseEmptyAmount() external
     {
-        customToken1.transfer(owner, 100);
-        assertEq(customToken1.balanceOf(owner), 100);
-
+        deal(address(customToken1), owner, 100);
         vm.startPrank(owner);
         erc20Authorized.authorize(address(customToken1), authorized1, 50);
         vm.expectRevert();
@@ -226,9 +219,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_decreaseEmptyAmount() external
     {
-        customToken1.transfer(owner, 100);
-        assertEq(customToken1.balanceOf(owner), 100);
-
+        deal(address(customToken1), owner, 100);
         vm.startPrank(owner);
         erc20Authorized.authorize(address(customToken1), authorized1, 50);
         vm.expectRevert();
@@ -237,9 +228,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_increaseMoreThanBalance() external
     {
-        customToken1.transfer(owner, 100);
-        assertEq(customToken1.balanceOf(owner), 100);
-
+        deal(address(customToken1), owner, 100);
         vm.startPrank(owner);
         erc20Authorized.authorize(address(customToken1), authorized1, 50);
         vm.expectRevert();
@@ -250,19 +239,25 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
     function test_increaseDecreaseAuthorizedCap() external
     {
-        customToken1.transfer(owner, 100);
-        assertEq(customToken1.balanceOf(owner), 100);
-
+        deal(address(customToken1), owner, 100);
         vm.startPrank(owner);
         erc20Authorized.authorize(address(customToken1), authorized1, 10);
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 10, "Cap should updated after authorizing");
+        vm.expectEmit(true, true, false, true);
+        emit IncreaseAuthorizedCap(address(customToken1), owner, authorized1, 60);
         erc20Authorized.increaseAuthorizedCap(address(customToken1), authorized1, 50);
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 60, "Cap should updated after increase");
+        vm.expectEmit(true, true, false, true);
+        emit IncreaseAuthorizedCap(address(customToken1), owner, authorized1, 80);
         erc20Authorized.increaseAuthorizedCap(address(customToken1), authorized1, 20);
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 80, "Cap should updated after increase");
 
+        vm.expectEmit(true, true, false, true);
+        emit DecreaseAuthorizedCap(address(customToken1), owner, authorized1, 30);
         erc20Authorized.decreaseAuthorizedCap(address(customToken1), authorized1, 50);
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 30, "Cap should updated after decrease");
+        vm.expectEmit(true, true, false, true);
+        emit DecreaseAuthorizedCap(address(customToken1), owner, authorized1, 20);
         erc20Authorized.decreaseAuthorizedCap(address(customToken1), authorized1, 10);
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 20, "Cap should updated after decrease");
     }
@@ -275,6 +270,8 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
 
         vm.startPrank(owner);
         erc20Authorized.authorize(address(customToken1), authorized1, 50);
+        vm.expectEmit(true, true, false, true);
+        emit IncreaseAuthorizedCap(address(customToken1), owner, authorized1, maxInt);
         erc20Authorized.increaseAuthorizedCap(address(customToken1), authorized1, maxInt);
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), maxInt, "Cap should clip overflow to maxInt on increase");
     }
@@ -282,11 +279,11 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
     function test_decreaseUnderflow() external
     {
         uint256 amount = 100;
-        customToken1.transfer(owner, amount);
-        assertEq(customToken1.balanceOf(owner), amount);
-
+        deal(address(customToken1), owner, amount);
         vm.startPrank(owner);
         erc20Authorized.authorize(address(customToken1), authorized1, amount / 2);
+        vm.expectEmit(true, true, false, true);
+        emit DecreaseAuthorizedCap(address(customToken1), owner, authorized1, 0);
         erc20Authorized.decreaseAuthorizedCap(address(customToken1), authorized1, amount / 2);
 
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 0, "Cap should decrease");
@@ -295,9 +292,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
     function test_decreaseToZero() external
     {
         uint256 amount = 100;
-        customToken1.transfer(owner, amount);
-        assertEq(customToken1.balanceOf(owner), amount);
-
+        deal(address(customToken1), owner, 100);
         vm.startPrank(owner);
         erc20Authorized.authorize(address(customToken1), authorized1, amount / 2);
         erc20Authorized.decreaseAuthorizedCap(address(customToken1), authorized1, amount);

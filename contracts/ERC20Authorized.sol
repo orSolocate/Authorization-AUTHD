@@ -33,7 +33,8 @@ contract ERC20Authorized is ERC20, IERC20Authorized
 
     constructor() ERC20("AuthorizedToken", "AUTHD")
     {
-        _mint(msg.sender, INITIAL_AUTHD_SUPPLY);
+        // For E: registration: check if needed after you add Ownable
+        //_mint(msg.sender, INITIAL_AUTHD_SUPPLY);
     }
 
     // for E: Your code here
@@ -44,8 +45,12 @@ contract ERC20Authorized is ERC20, IERC20Authorized
      */
 
     // TODO: use custom errors instead of `require` to reduce code size
+    // TODO: change msg.sender logic in all contract when implementing the _update logic on spend
 
     event Authorization(address indexed, address indexed, address, uint256);
+    event RevokeAuthorization(address indexed, address indexed, address);
+    event IncreaseAuthorizedCap(address indexed, address indexed, address, uint256);
+    event DecreaseAuthorizedCap(address indexed, address indexed, address, uint256);
 
     modifier validCap(address addr, uint256 cap)
     {
@@ -92,6 +97,7 @@ contract ERC20Authorized is ERC20, IERC20Authorized
             }
             require(IERC20(addr).balanceOf(msg.sender) >= newCap, "Cannot authorize more than balance");
             authorizedCaps[addr][msg.sender][authorized] = newCap;
+            emit IncreaseAuthorizedCap(addr, msg.sender, authorized, newCap);
         }
     }
 
@@ -100,18 +106,21 @@ contract ERC20Authorized is ERC20, IERC20Authorized
         validCap(addr, subtractedCap)
     {
         uint256 currentCap = authorizedCaps[addr][msg.sender][authorized];
+        uint256 newCap;
         if (subtractedCap >= currentCap)
         {
-            authorizedCaps[addr][msg.sender][authorized] = 0;
+            newCap = 0;
         }
         else
         {
             unchecked
             {
                 // currentCap>=subtractedCap, no way for underflow
-                authorizedCaps[addr][msg.sender][authorized] -= subtractedCap;
+                newCap = currentCap - subtractedCap;
             }
         }
+        authorizedCaps[addr][msg.sender][authorized] = newCap;
+        emit DecreaseAuthorizedCap(addr, msg.sender, authorized, newCap);
     }
 
     function isAuthorizedByMe(address addr, address authorized) public view returns (bool)
@@ -123,6 +132,7 @@ contract ERC20Authorized is ERC20, IERC20Authorized
     {
         require(isAuthorizedByMe(addr, authorized), "Cannot revoke authorization without authorizing first");
         delete authorizedCaps[addr][msg.sender][authorized];
+        emit RevokeAuthorization(addr, msg.sender, authorized);
     }
 
     /// Should be called by authorized
