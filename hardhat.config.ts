@@ -1,5 +1,6 @@
 import hardhatToolboxViemPlugin from "@nomicfoundation/hardhat-toolbox-viem";
 import { configVariable, defineConfig } from "hardhat/config";
+import hardhatIgnoreWarnings from "hardhat-ignore-warnings";
 
 export default defineConfig({
   solidity: {
@@ -17,5 +18,14 @@ export default defineConfig({
       apiKey: configVariable("ETHERSCAN_API_KEY"),
     },
   },
-  plugins: [hardhatToolboxViemPlugin],
+  plugins: [hardhatToolboxViemPlugin, hardhatIgnoreWarnings],
+  warnings: {
+    'test/**/*': {
+      'code-size': 'off',
+      default: 'warn',
+    },
+    'contracts/**/*': {
+      default: 'warn',
+    },
+  }
 });

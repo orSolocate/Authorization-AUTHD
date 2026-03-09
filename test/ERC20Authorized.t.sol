@@ -399,6 +399,8 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized2), 30, "Cap should updated after approveFor");
     }
 
+    /*
+    // TODO: Consider moving this functionality to Client
     function test_approveForEmptySpendersOrAmounts() external
     {
         uint256 amount = 100;
@@ -424,6 +426,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         erc20Authorized.approveFor(owner, authorized1, spenders, amountsDiffLength);
     }
 
+    // TODO: Consider moving this functionality to Client
     function test_approveForConstraintsForEachSpender() external
     {
         uint256 amount = 100;
@@ -454,6 +457,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         erc20Authorized.approveFor(owner, authorized1, spendersWithAuthorized, amounts);
     }
 
+    // TODO: Consider moving this functionality to Client
     function test_approveForSameSpenders() external
     {
         uint256 amount = 100;
@@ -470,4 +474,5 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         erc20Authorized.approveFor(owner, authorized1, spenders, amounts);
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), amount / 4, "Cap should updated after approveFor");
     }
+    */
 }
