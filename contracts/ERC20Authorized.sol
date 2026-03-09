@@ -51,29 +51,29 @@ contract ERC20Authorized is ERC20, IERC20Authorized
     event RevokeAuthorization(address indexed, address indexed, address);
     event IncreaseAuthorizedCap(address indexed, address indexed, address, uint256);
     event DecreaseAuthorizedCap(address indexed, address indexed, address, uint256);
+    event ApproveFor(address indexed, address indexed, address, uint256);
 
-    modifier validCap(address addr, uint256 cap)
+    modifier validCap(uint256 cap)
     {
         require(cap > 0, "Cap amount cannot be empty");
         _;
     }
 
-    modifier isAuthorized(address addr, address authorized)
+    modifier currentlyAuthorized(address addr, address owner, address authorized)
     {
-        require(isAuthorizedByMe(addr, authorized), "Address not authorized");
+        require(isAuthorized(addr, owner, authorized), "Address not authorized");
         _;
     }
 
     /// authorize docstring - assuming addr is the address of the token contract
-    function authorize(address addr, address authorized, uint256 cap) public validCap(addr, cap)
+    function authorize(address owner, address authorized, uint256 cap) public validCap(cap)
     {
         // require the call to be from a registered client
-        require(msg.sender != authorized, "Self authorization is prohibited");
-        require(!isAuthorizedByMe(addr, authorized), "Address already authorized, call increase/decrease instead");
-        require(IERC20(addr).balanceOf(msg.sender) >= cap, "Cannot authorize more than balance");
-        authorizedCaps[addr][msg.sender][authorized] = cap;
-        emit Authorization(addr, msg.sender, authorized, cap);
-        // TODO: approve authorized address on client
+        require(owner != authorized, "Self authorization is prohibited");
+        require(!isAuthorized(msg.sender, owner, authorized), "Address already authorized, call increase/decrease instead");
+        require(IERC20(msg.sender).balanceOf(owner) >= cap, "Cannot authorize more than balance");
+        authorizedCaps[msg.sender][owner][authorized] = cap;
+        emit Authorization(msg.sender, owner, authorized, cap);
     }
 
     /// This is the read function
@@ -82,11 +82,11 @@ contract ERC20Authorized is ERC20, IERC20Authorized
         return authorizedCaps[addr][owner][authorized];
     }
 
-    function increaseAuthorizedCap(address addr, address authorized, uint256 addedCap) public
-        isAuthorized(addr, authorized)
-        validCap(addr, addedCap)
+    function increaseAuthorizedCap(address owner, address authorized, uint256 addedCap) public
+        currentlyAuthorized(msg.sender, owner, authorized)
+        validCap(addedCap)
     {
-        uint256 currentCap = authorizedCaps[addr][msg.sender][authorized];
+        uint256 currentCap = authorizedCaps[msg.sender][owner][authorized];
         unchecked
         {
             uint256 newCap = currentCap + addedCap;
@@ -95,17 +95,17 @@ contract ERC20Authorized is ERC20, IERC20Authorized
                 // Overflow occurred
                 newCap = type(uint256).max;
             }
-            require(IERC20(addr).balanceOf(msg.sender) >= newCap, "Cannot authorize more than balance");
-            authorizedCaps[addr][msg.sender][authorized] = newCap;
-            emit IncreaseAuthorizedCap(addr, msg.sender, authorized, newCap);
+            require(IERC20(msg.sender).balanceOf(owner) >= newCap, "Cannot authorize more than balance");
+            authorizedCaps[msg.sender][owner][authorized] = newCap;
+            emit IncreaseAuthorizedCap(msg.sender, owner, authorized, newCap);
         }
     }
 
-    function decreaseAuthorizedCap(address addr, address authorized, uint256 subtractedCap) public
-        isAuthorized(addr, authorized)
-        validCap(addr, subtractedCap)
+    function decreaseAuthorizedCap(address owner, address authorized, uint256 subtractedCap) public
+        currentlyAuthorized(msg.sender, owner, authorized)
+        validCap(subtractedCap)
     {
-        uint256 currentCap = authorizedCaps[addr][msg.sender][authorized];
+        uint256 currentCap = authorizedCaps[msg.sender][owner][authorized];
         uint256 newCap;
         if (subtractedCap >= currentCap)
         {
@@ -119,31 +119,45 @@ contract ERC20Authorized is ERC20, IERC20Authorized
                 newCap = currentCap - subtractedCap;
             }
         }
-        authorizedCaps[addr][msg.sender][authorized] = newCap;
-        emit DecreaseAuthorizedCap(addr, msg.sender, authorized, newCap);
+        authorizedCaps[msg.sender][owner][authorized] = newCap;
+        emit DecreaseAuthorizedCap(msg.sender, owner, authorized, newCap);
     }
 
-    function isAuthorizedByMe(address addr, address authorized) public view returns (bool)
+    function isAuthorized(address addr, address owner, address authorized) public view returns (bool)
     {
-        return authorizedCaps[addr][msg.sender][authorized] > 0;
+        return authorizedCaps[addr][owner][authorized] > 0;
     }
 
-    function revokeAuthorization(address addr, address authorized) public
+    function revokeAuthorization(address owner, address authorized) public
     {
-        require(isAuthorizedByMe(addr, authorized), "Cannot revoke authorization without authorizing first");
-        delete authorizedCaps[addr][msg.sender][authorized];
-        emit RevokeAuthorization(addr, msg.sender, authorized);
+        require(isAuthorized(msg.sender, owner, authorized), "Cannot revoke authorization without authorizing first");
+        delete authorizedCaps[msg.sender][owner][authorized];
+        emit RevokeAuthorization(msg.sender, owner, authorized);
     }
 
-    /// Should be called by authorized
-    function approveFor(address owner, address spender, uint256 amount) public
+    function approveFor(address owner, address authorized, address spender, uint256 amount) public
+        currentlyAuthorized(msg.sender, owner, authorized)
+        validCap(amount)
     {
-
+        // require(isRegistered(msg.sender), "Contract not registered to authorize");
+        require(spender != authorized, "Self approval is prohibited");
+        require(spender != owner, "Approval to owner is prohibited");
+        // ERC20 allows to approve more than owner balance, fails only during transfer. So leave this error check out
+        //require(IERC20(msg.sender).balanceOf(owner) >= amount, "Owner doesn't have enough balance");
+        require(getAuthorizedCap(msg.sender, owner, authorized) >= amount, "Authorized doesn't have enough cap");
+        decreaseAuthorizedCap(owner, authorized, amount);
+        emit ApproveFor(msg.sender, owner,  authorized, amount);
+        // Approval itself done by client
     }
 
     // Supports approving multiple spenders in a single transaction
-    function approveFor(address owner, address[] memory spenders, uint256[] memory amounts) public
+    function approveFor(address owner, address authorized, address[] calldata spenders, uint256[] calldata amounts) public
     {
-
+        require((spenders.length == amounts.length) && (amounts.length > 0), "Spenders and amounts array length should be non-zero and same");
+        for (uint256 i = 0; i < spenders.length; ++i)
+        {
+            // TODO: consider maybe not revert all if some approvals fail
+            approveFor(owner, authorized, spenders[i], amounts[i]);
+        }
     }
 }
