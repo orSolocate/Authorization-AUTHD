@@ -1,0 +1,12 @@
+pre-commit:
+  parallel: false
+  commands:
+    no-env:
+      run: |
+        if git diff --cached --name-only | grep -E '(^|/)\.env($|\.|/)'; then
+          echo ".env file detected in commit!"
+          exit 1
+        fi
+
+    tests:
+      run: npx hardhat test
