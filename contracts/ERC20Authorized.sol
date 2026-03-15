@@ -58,6 +58,12 @@ contract ERC20Authorized is ERC20, IERC20Authorized
         _;
     }
 
+    modifier validAddress(address addr)
+    {
+        require(addr != address(0), "InvalidAddress");
+        _;
+    }
+
     modifier currentlyAuthorized(address addr, address owner, address authorized)
     {
         require(isAuthorized(addr, owner, authorized), "Address not authorized");
@@ -65,7 +71,10 @@ contract ERC20Authorized is ERC20, IERC20Authorized
     }
 
     /// authorize docstring - assuming addr is the address of the token contract
-    function authorize(address owner, address authorized, uint256 cap) public validCap(cap)
+    function authorize(address owner, address authorized, uint256 cap) public
+        validCap(cap)
+        validAddress(owner)
+        validAddress(authorized)
     {
         // require the call to be from a registered client
         require(owner != authorized, "Self authorization is prohibited");
@@ -132,8 +141,8 @@ contract ERC20Authorized is ERC20, IERC20Authorized
     }
 
     function revokeAuthorization(address owner, address authorized) public
+        currentlyAuthorized(msg.sender, owner, authorized)
     {
-        require(isAuthorized(msg.sender, owner, authorized), "Cannot revoke authorization without authorizing first");
         delete authorizedCaps[msg.sender][owner][authorized];
         emit RevokeAuthorization(msg.sender, owner, authorized);
     }
@@ -141,6 +150,7 @@ contract ERC20Authorized is ERC20, IERC20Authorized
     function approveFor(address owner, address authorized, address spender, uint256 amount) public
         currentlyAuthorized(msg.sender, owner, authorized)
         validCap(amount)
+        validAddress(spender)
     {
         // require(isRegistered(msg.sender), "Contract not registered to authorize");
         require(spender != authorized, "Self approval is prohibited");

@@ -34,6 +34,19 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
     //        customToken1.transfer(owner, 50);
     //        assertEq(customToken1.balanceOf(owner), 50);
 
+
+    function test_authorizeInvalidAddress() external
+    {
+        deal(address(customToken1), owner, 50);
+        vm.prank(address(customToken1));
+        // Trying to authorize zero address
+        vm.expectRevert();
+        erc20Authorized.authorize(owner, address(0), 50);
+        // Trying to authorize from the zero address
+        vm.expectRevert();
+        erc20Authorized.authorize(address(0), authorized1, 50);
+    }
+
     function test_selfAuthorize() external
     {
         deal(address(customToken1), owner, 50);
@@ -318,6 +331,16 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         vm.prank(address(customToken1));
         vm.expectRevert();
         erc20Authorized.approveFor(owner, authorized1, authorized2, amount / 2);
+    }
+
+    function test_approveForInvalidSpender() external
+    {
+        uint256 amount = 100;
+        deal(address(customToken1), owner, amount);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, amount / 2);
+        vm.expectRevert();
+        erc20Authorized.approveFor(owner, authorized1, address(0), amount / 2);
     }
 
     function test_approveForSpenderIsOwner() external
