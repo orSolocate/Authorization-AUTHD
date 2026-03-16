@@ -7,9 +7,10 @@ pragma solidity ^0.8.28;
 // import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20Authorized} from "./interfaces/IERC20Authorized.sol";
+import {ERC20AuthorizedErrors} from "./ERC20AuthorizedErrors.sol";
 
 /// The "server"
-contract ERC20Authorized is ERC20, IERC20Authorized
+contract ERC20Authorized is ERC20, IERC20Authorized, ERC20AuthorizedErrors
 {
     // For registration verification
     mapping(address => bool) public registeredClients;
@@ -49,17 +50,18 @@ contract ERC20Authorized is ERC20, IERC20Authorized
      * INTERFACE FUNCTIONS (this is a placeholder to avoid merge conflicts
      */
 
-    // TODO: use custom errors instead of `require` to reduce code size
-
     event Authorization(address indexed, address indexed, address, uint256);
     event RevokeAuthorization(address indexed, address indexed, address);
     event IncreaseAuthorizedCap(address indexed, address indexed, address, uint256);
     event DecreaseAuthorizedCap(address indexed, address indexed, address, uint256);
     event ApproveFor(address indexed, address indexed, address, uint256);
 
-    modifier validCap(uint256 cap)
+    modifier validCapAmount(uint256 capAmount)
     {
-        require(cap > 0, "Cap amount cannot be empty");
+        if (capAmount == 0)
+        {
+            revert InvalidAmount(capAmount);
+        }
         _;
     }
 
@@ -71,7 +73,10 @@ contract ERC20Authorized is ERC20, IERC20Authorized
 
     modifier currentlyAuthorized(address addr, address owner, address authorized)
     {
-        require(isAuthorized(addr, owner, authorized), "Address not authorized");
+        if (!isAuthorized(client, owner, authorized))
+        {
+            revert NotCurrentlyAuthorized(client, owner, authorized);
+        }
         _;
     }
 
@@ -90,14 +95,14 @@ contract ERC20Authorized is ERC20, IERC20Authorized
     }
 
     /// This is the read function
-    function getAuthorizedCap(address addr, address owner, address authorized) view public returns (uint256)
+    function getAuthorizedCap(address client, address owner, address authorized) view public returns (uint256)
     {
         return authorizationData[addr][owner][authorized].cap;
     }
 
     function increaseAuthorizedCap(address owner, address authorized, uint256 addedCap) public
         currentlyAuthorized(msg.sender, owner, authorized)
-        validCap(addedCap)
+        validCapAmount(addedCap)
         returns (uint256)
     {
         uint256 currentCap = authorizationData[msg.sender][owner][authorized].cap;
@@ -163,8 +168,10 @@ contract ERC20Authorized is ERC20, IERC20Authorized
         validAddress(spender)
     {
         // require(isRegistered(msg.sender), "Contract not registered to authorize");
-        require(spender != authorized, "Self approval is prohibited");
-        require(spender != owner, "Approval to owner is prohibited");
+        if ((spender == authorized) || (spender == owner))
+        {
+            revert InvalidSpender(spender);
+        }
         // ERC20 allows to approve more than owner balance, fails only during transfer. So leave this error check out
         //require(IERC20(msg.sender).balanceOf(owner) >= amount, "Owner doesn't have enough balance");
         require(getAuthorizedCap(msg.sender, owner, authorized) >= amount, "Authorized doesn't have enough cap");
