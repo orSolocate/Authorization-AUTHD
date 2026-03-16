@@ -9,29 +9,34 @@ export default defineConfig({
       optimizer: {
         enabled: true,
         runs: 1,
-      }
-    }
+      },
+    },
   },
+
   networks: {
     sepolia: {
       type: "http",
+      chainType: "l1",
       url: configVariable("SEPOLIA_RPC_URL"),
       accounts: [configVariable("SEPOLIA_PRIVATE_KEY")],
     },
   },
+
   verify: {
     etherscan: {
       apiKey: configVariable("ETHERSCAN_API_KEY"),
     },
   },
+
   plugins: [hardhatToolboxViemPlugin, hardhatIgnoreWarnings],
+
   warnings: {
-    'test/**/*': {
-      'code-size': 'off',
-      default: 'warn',
+    "test/**/*": {
+      "code-size": "off",
+      default: "warn",
     },
-    'contracts/**/*': {
-      default: 'warn',
+    "contracts/**/*": {
+      default: "warn",
     },
-  }
+  },
 });
