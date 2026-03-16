@@ -1,80 +1,98 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-/// For Debug:
-//import "hardhat/console.sol";
-
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Authorized} from "./interfaces/IERC20Authorized.sol";
+import {ERC20AuthorizedErrors} from "./ERC20AuthorizedErrors.sol";
 
-/// The "server"
-contract ERC20Authorized is ERC20, Ownable, IERC20Authorized
-{
-    // For registration verification
+contract ERC20Authorized is ERC20, IERC20Authorized, ERC20AuthorizedErrors, Ownable {
+    // ---------------------------------
+    // Registration state
+    // ---------------------------------
     mapping(address => bool) public registeredClients;
 
-    uint256 private constant INITIAL_AUTHD_SUPPLY = 1_000_000;
-    // 25% of total supply reserved for client registrations
-    uint256 public constant CLIENT_AUTHD_POOL = 250_000;
+    uint256 private constant INITIAL_AUTHD_SUPPLY = 1_000_000 * 1e18;
+    uint256 public constant CLIENT_AUTHD_POOL = 250_000 * 1e18;
 
-    // Simple capstone-friendly registration economics
+    // Minimum ETH needed to register at all
     uint256 public constant REGISTRATION_FEE = 0.01 ether;
-    uint256 public constant REGISTRATION_AUTHD_AMOUNT = 20;
 
-    // Remaining AUTHD reserved for clients
+    // Base AUTHD amount granted for a valid registration
+    uint256 public constant REGISTRATION_AUTHD_AMOUNT = 20 * 1e18;
+
+    // Daily cached rate
+    uint256 public cachedRateDay;
+    uint256 public cachedAuthdRate;
+
+    // Remaining AUTHD held by server for registrations
     uint256 public clientPoolRemaining;
 
-    // Cap = 0 is the default and means no authorization.
-    // Usage: authorizedCaps[token][owner][authorized]
-    mapping(address => mapping(address => mapping(address => uint256))) public authorizedCaps;
+    // ---------------------------------
+    // Authorization state
+    // ---------------------------------
+    struct AuthorizationEntry {
+        uint256 cap;
+        bool isAuthorized;
+    }
 
-    /*
-     * Registration / treasury events
-     */
+    // client token => owner => authorized => entry
+    mapping(address => mapping(address => mapping(address => AuthorizationEntry))) public authorizationData;
+
+    // ---------------------------------
+    // Registration / treasury events
+    // ---------------------------------
     event ClientRegistered(address indexed client, address indexed payer, uint256 ethPaid, uint256 authdSent);
     event ClientRegistrationRevoked(address indexed client);
     event TreasuryWithdrawal(address indexed to, uint256 amount);
 
-    /*
-     * INTERFACE / AUTHORIZATION EVENTS
-     */
+    // ---------------------------------
+    // Interface events
+    // ---------------------------------
     event Authorization(address indexed, address indexed, address, uint256);
     event RevokeAuthorization(address indexed, address indexed, address);
     event IncreaseAuthorizedCap(address indexed, address indexed, address, uint256);
     event DecreaseAuthorizedCap(address indexed, address indexed, address, uint256);
     event ApproveFor(address indexed, address indexed, address, uint256);
 
-    constructor() ERC20("AuthorizedToken", "AUTHD") Ownable(msg.sender)
-    {
+    constructor() ERC20("AuthorizedToken", "AUTHD") Ownable(msg.sender) {
         clientPoolRemaining = CLIENT_AUTHD_POOL;
 
-        // 25% for client registrations sits in the contract
+        // 25% for client registrations sits in this contract
         _mint(address(this), CLIENT_AUTHD_POOL);
 
-        // Remaining 75% goes to deployer/owner
+        // 75% to owner/deployer
         _mint(msg.sender, INITIAL_AUTHD_SUPPLY - CLIENT_AUTHD_POOL);
+
+        // Lock initial daily rate at deployment day
+        cachedRateDay = _currentDay();
+        cachedAuthdRate = previewAuthdRate(clientPoolRemaining / 1e18);
     }
 
-    /*
-     * -----------------------------
-     * For E: Registration / Treasury
-     * -----------------------------
-     */
-
-    modifier onlyRegisteredClient()
-    {
+    // ---------------------------------
+    // Registration / treasury logic
+    // ---------------------------------
+    modifier onlyRegisteredClient() {
         require(registeredClients[msg.sender], "Client contract not registered");
         _;
     }
 
-    function isRegisteredClient(address client) public view returns (bool)
-    {
+    function isRegisteredClient(address client) public view returns (bool) {
         return registeredClients[client];
     }
 
-    function _linearRate(uint256 x, uint256 xHigh, uint256 xLow, uint256 yHigh, uint256 yLow) internal pure returns (uint256) {
+    function _currentDay() internal view returns (uint256) {
+        return block.timestamp / 1 days;
+    }
+
+    function _linearRate(
+        uint256 x,
+        uint256 xHigh,
+        uint256 xLow,
+        uint256 yHigh,
+        uint256 yLow
+    ) internal pure returns (uint256) {
         require(x <= xHigh && x >= xLow, "x out of range");
         if (xHigh == xLow) return yLow;
 
@@ -82,13 +100,8 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized
         return yHigh + ((xHigh - x) * (yLow - yHigh)) / (xHigh - xLow);
     }
 
-
-
     /**
-     * Piecewise linear pricing preview.
-     *
-     * remainingWholeTokens is the number of whole AUTHD tokens left in the client pool
-     * (not 18-decimal units).
+     * remainingWholeTokens is in whole AUTHD tokens, not wei units.
      *
      * Tier 1: 250000 -> 200000 maps 0.00002 ETH -> 0.0004 ETH
      * Tier 2: 200000 ->  50000 maps 0.0004 ETH -> 0.002 ETH
@@ -125,71 +138,108 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized
     }
 
     /**
-     * Current ETH price per 1 AUTHD token (1 whole token, not 1 wei of AUTHD).
+     * View helper for frontend/read-only use.
+     * If today's rate is already cached, return it.
+     * Otherwise preview what today's rate would be from current pool state.
      */
-    function getAuthdRate() public view returns (uint256) {
+    function previewCurrentAuthdRate() public view returns (uint256) {
+        uint256 today = _currentDay();
+        if (cachedRateDay == today) {
+            return cachedAuthdRate;
+        }
+
         uint256 remainingWholeTokens = clientPoolRemaining / 1e18;
         return previewAuthdRate(remainingWholeTokens);
     }
 
     /**
-     * ETH fee to register a client for REGISTRATION_AUTHD_AMOUNT (20 AUTHD).
+     * Locks / refreshes the daily rate once per day.
+     * Same day => same rate, even if registrations happen later that day.
      */
-    function getRegistrationFee() public view returns (uint256) {
-        uint256 dynamicFee = (REGISTRATION_AUTHD_AMOUNT * getAuthdRate()) / 1e18;
+    function _getOrUpdateDailyAuthdRate() internal returns (uint256) {
+        uint256 today = _currentDay();
 
-        if (dynamicFee < REGISTRATION_FEE) {
-            return REGISTRATION_FEE;
+        if (cachedRateDay != today) {
+            cachedRateDay = today;
+            cachedAuthdRate = previewAuthdRate(clientPoolRemaining / 1e18);
         }
 
-        return dynamicFee;
+        return cachedAuthdRate;
     }
 
+    /**
+     * Current locked ETH price per 1 whole AUTHD token.
+     * This updates at most once per day.
+     */
+    function getAuthdRate() public returns (uint256) {
+        return _getOrUpdateDailyAuthdRate();
+    }
+
+    function _registrationFeeFromRate(uint256 rate) internal pure returns (uint256) {
+        uint256 dynamicFee = (REGISTRATION_AUTHD_AMOUNT * rate) / 1e18;
+        return dynamicFee < REGISTRATION_FEE ? REGISTRATION_FEE : dynamicFee;
+    }
 
     /**
-     * Register a client token contract so it can use the AUTHD authorization logic.
-     *
-     * Simple capstone model:
-     * - payer sends ETH
-     * - server marks `client` as registered
-     * - server sends a fixed amount of AUTHD to the client address
+     * Locked daily minimum fee needed to register.
      */
+    function getRegistrationFee() public returns (uint256) {
+        uint256 rate = _getOrUpdateDailyAuthdRate();
+        return _registrationFeeFromRate(rate);
+    }
+
     /**
-     * Register a client token contract.
-     * The caller pays ETH according to the current rate and the client receives 20 AUTHD.
+     * View helper for reading today's minimum fee without changing state.
+     */
+    function previewCurrentRegistrationFee() public view returns (uint256) {
+        uint256 rate = previewCurrentAuthdRate();
+        return _registrationFeeFromRate(rate);
+    }
+
+    /**
+     * Registration rules implemented here:
+     * 1) Same-day rate is locked once first queried/used.
+     * 2) Registration requires at least today's locked minimum fee.
+     * 3) Base registration gives 20 AUTHD.
+     * 4) Any ETH paid above the minimum fee is converted into extra AUTHD
+     *    at the same locked daily rate.
      */
     function registerClient(address client) external payable {
         require(client != address(0), "Invalid client address");
         require(!registeredClients[client], "Client already registered");
 
-        uint256 fee = getRegistrationFee();
+        uint256 rate = _getOrUpdateDailyAuthdRate();
+        uint256 fee = _registrationFeeFromRate(rate);
+
         require(msg.value >= fee, "Insufficient registration fee");
-        require(clientPoolRemaining >= REGISTRATION_AUTHD_AMOUNT, "Client pool exhausted");
-        require(balanceOf(address(this)) >= REGISTRATION_AUTHD_AMOUNT, "Insufficient AUTHD in pool");
-        // TODO: use custom errors instead of `require` to reduce code size
+
+        uint256 authdAmount = REGISTRATION_AUTHD_AMOUNT;
+
+        // Convert only the excess above the minimum fee into extra AUTHD
+        if (msg.value > fee) {
+            uint256 extraEth = msg.value - fee;
+            uint256 extraAuthd = (extraEth * 1e18) / rate;
+            authdAmount += extraAuthd;
+        }
+
+        require(clientPoolRemaining >= authdAmount, "Client pool exhausted");
+        require(balanceOf(address(this)) >= authdAmount, "Insufficient AUTHD in pool");
+
         registeredClients[client] = true;
-        clientPoolRemaining -= REGISTRATION_AUTHD_AMOUNT;
+        clientPoolRemaining -= authdAmount;
 
-        _transfer(address(this), client, REGISTRATION_AUTHD_AMOUNT);
+        _transfer(address(this), client, authdAmount);
 
-        emit ClientRegistered(client, msg.sender, msg.value, REGISTRATION_AUTHD_AMOUNT);
+        emit ClientRegistered(client, msg.sender, msg.value, authdAmount);
     }
 
-    /**
-     * Optional admin function in case you want to disable a client later.
-     */
-    function revokeClientRegistration(address client) external onlyOwner
-    {
+    function revokeClientRegistration(address client) external onlyOwner {
         require(registeredClients[client], "Client not registered");
         registeredClients[client] = false;
         emit ClientRegistrationRevoked(client);
     }
 
-    /**
-     * Withdraw ETH accumulated from client registrations.
-     */
-    function withdrawTreasury(address payable to) external onlyOwner
-    {
+    function withdrawTreasury(address payable to) external onlyOwner {
         require(to != address(0), "Invalid withdraw address");
 
         uint256 amount = address(this).balance;
@@ -203,132 +253,152 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized
 
     receive() external payable {}
 
-    /*
-     * -----------------------------
-     * Existing authorization logic
-     * -----------------------------
-     */
-
-    modifier validCap(uint256 cap)
-    {
-        require(cap > 0, "Cap amount cannot be empty");
+    // ---------------------------------
+    // Authorization logic
+    // ---------------------------------
+    modifier validCapAmount(uint256 capAmount) {
+        if (capAmount == 0) {
+            revert InvalidAmount(capAmount);
+        }
         _;
     }
 
-    modifier currentlyAuthorized(address addr, address owner, address authorized)
-    {
-        require(isAuthorized(addr, owner, authorized), "Address not authorized");
+    modifier validAddress(address addr) {
+        require(addr != address(0), "InvalidAddress");
         _;
     }
 
-    /// authorize docstring - assuming msg.sender is the registered token contract
-    function authorize(address owner, address authorized, uint256 cap) public
-        validCap(cap)
+    modifier currentlyAuthorized(address clientAddr, address owner, address authorized) {
+        if (!isAuthorized(clientAddr, owner, authorized)) {
+            revert NotCurrentlyAuthorized(clientAddr, owner, authorized);
+        }
+        _;
+    }
+
+    function authorize(address owner, address authorized, uint256 cap)
+        public
         onlyRegisteredClient
+        validAddress(owner)
+        validAddress(authorized)
+        validCapAmount(cap)
     {
-        require(owner != authorized, "Self authorization is prohibited");
-        require(!isAuthorized(msg.sender, owner, authorized), "Address already authorized, call increase/decrease instead");
-        require(IERC20(msg.sender).balanceOf(owner) >= cap, "Cannot authorize more than balance");
+        if (owner == authorized) {
+            revert SelfAuthorizationProhibited();
+        }
 
-        authorizedCaps[msg.sender][owner][authorized] = cap;
+        if (isAuthorized(msg.sender, owner, authorized)) {
+            revert AlreadyAuthorized(msg.sender, owner, authorized);
+        }
+
+        if (IERC20(msg.sender).balanceOf(owner) < cap) {
+            revert InsufficientOwnerBalance(msg.sender, owner, cap);
+        }
+
+        authorizationData[msg.sender][owner][authorized].isAuthorized = true;
+        authorizationData[msg.sender][owner][authorized].cap = cap;
+
         emit Authorization(msg.sender, owner, authorized, cap);
     }
 
-    /// This is the read function
-    function getAuthorizedCap(address addr, address owner, address authorized) view public returns (uint256)
-    {
-        return authorizedCaps[addr][owner][authorized];
-    }
-
-    function increaseAuthorizedCap(address owner, address authorized, uint256 addedCap) public
-        onlyRegisteredClient
-        currentlyAuthorized(msg.sender, owner, authorized)
-        validCap(addedCap)
+    function getAuthorizedCap(address client, address owner, address authorized)
+        public
+        view
         returns (uint256)
     {
-        uint256 currentCap = authorizedCaps[msg.sender][owner][authorized];
-        unchecked
-        {
+        return authorizationData[client][owner][authorized].cap;
+    }
+
+    function increaseAuthorizedCap(address owner, address authorized, uint256 addedCap)
+        public
+        onlyRegisteredClient
+        currentlyAuthorized(msg.sender, owner, authorized)
+        validCapAmount(addedCap)
+        returns (uint256)
+    {
+        uint256 currentCap = authorizationData[msg.sender][owner][authorized].cap;
+
+        unchecked {
             uint256 newCap = currentCap + addedCap;
-            if (newCap < currentCap)
-            {
-                // Overflow occurred
+            if (newCap < currentCap) {
                 newCap = type(uint256).max;
             }
 
-            require(IERC20(msg.sender).balanceOf(owner) >= newCap, "Cannot authorize more than balance");
+            if (IERC20(msg.sender).balanceOf(owner) < newCap) {
+                revert InsufficientOwnerBalance(msg.sender, owner, newCap);
+            }
 
-            authorizedCaps[msg.sender][owner][authorized] = newCap;
+            authorizationData[msg.sender][owner][authorized].cap = newCap;
             emit IncreaseAuthorizedCap(msg.sender, owner, authorized, newCap);
             return newCap;
         }
     }
 
-    function decreaseAuthorizedCap(address owner, address authorized, uint256 subtractedCap) public
-        onlyRegisteredClient
-        currentlyAuthorized(msg.sender, owner, authorized)
-        validCap(subtractedCap)
+    function _decreaseAuthorizedCap(address owner, address authorized, uint256 subtractedCap)
+        internal
         returns (uint256)
     {
-        uint256 currentCap = authorizedCaps[msg.sender][owner][authorized];
+        uint256 currentCap = authorizationData[msg.sender][owner][authorized].cap;
         uint256 newCap;
 
-        if (subtractedCap >= currentCap)
-        {
+        if (subtractedCap >= currentCap) {
             newCap = 0;
-        }
-        else
-        {
-            unchecked
-            {
-                // currentCap >= subtractedCap, no underflow
+        } else {
+            unchecked {
                 newCap = currentCap - subtractedCap;
             }
         }
 
-        authorizedCaps[msg.sender][owner][authorized] = newCap;
+        authorizationData[msg.sender][owner][authorized].cap = newCap;
         emit DecreaseAuthorizedCap(msg.sender, owner, authorized, newCap);
         return newCap;
     }
 
-    function isAuthorized(address addr, address owner, address authorized) public view returns (bool)
+    function decreaseAuthorizedCap(address owner, address authorized, uint256 subtractedCap)
+        public
+        onlyRegisteredClient
+        currentlyAuthorized(msg.sender, owner, authorized)
+        validCapAmount(subtractedCap)
+        returns (uint256)
     {
-        return authorizedCaps[addr][owner][authorized] > 0;
+        return _decreaseAuthorizedCap(owner, authorized, subtractedCap);
     }
 
-    function revokeAuthorization(address owner, address authorized) public onlyRegisteredClient
+    function isAuthorized(address client, address owner, address authorized)
+        public
+        view
+        returns (bool)
     {
-        require(isAuthorized(msg.sender, owner, authorized), "Cannot revoke authorization without authorizing first");
-        delete authorizedCaps[msg.sender][owner][authorized];
+        return authorizationData[client][owner][authorized].isAuthorized;
+    }
+
+    function revokeAuthorization(address owner, address authorized)
+        public
+        onlyRegisteredClient
+        currentlyAuthorized(msg.sender, owner, authorized)
+    {
+        delete authorizationData[msg.sender][owner][authorized];
         emit RevokeAuthorization(msg.sender, owner, authorized);
     }
 
-    function approveFor(address owner, address authorized, address spender, uint256 amount) public
+    function approveFor(address owner, address authorized, address spender, uint256 amount)
+        public
         onlyRegisteredClient
         currentlyAuthorized(msg.sender, owner, authorized)
-        validCap(amount)
+        validAddress(spender)
     {
-        require(spender != authorized, "Self approval is prohibited");
-        require(spender != owner, "Approval to owner is prohibited");
-        // ERC20 allows approval > balance, so leave balance check out
-        require(getAuthorizedCap(msg.sender, owner, authorized) >= amount, "Authorized doesn't have enough cap");
-
-        decreaseAuthorizedCap(owner, authorized, amount);
-        emit ApproveFor(msg.sender, owner, authorized, amount);
-
-        // Approval itself done by client
-    }
-
-    /*
-    // TODO: Consider moving this functionality to Client
-    // Supports approving multiple spenders in a single transaction
-    function approveFor(address owner, address authorized, address[] calldata spenders, uint256[] calldata amounts) public
-    {
-        require((spenders.length == amounts.length) && (amounts.length > 0), "Spenders and amounts array length should be non-zero and same");
-        for (uint256 i = 0; i < spenders.length; ++i)
-        {
-            approveFor(owner, authorized, spenders[i], amounts[i]);
+        if (spender == authorized || spender == owner) {
+            revert InvalidSpender(spender);
         }
+
+        uint256 currentCap = getAuthorizedCap(msg.sender, owner, authorized);
+        if (currentCap < amount) {
+            revert InsufficientAuthorizedCap(msg.sender, owner, authorized, currentCap, amount);
+        }
+
+        if (amount > 0) {
+            _decreaseAuthorizedCap(owner, authorized, amount);
+        }
+
+        emit ApproveFor(msg.sender, owner, authorized, amount);
     }
-    */
 }

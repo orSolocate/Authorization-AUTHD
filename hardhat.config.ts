@@ -5,6 +5,12 @@ import hardhatIgnoreWarnings from "hardhat-ignore-warnings";
 export default defineConfig({
   solidity: {
     version: "0.8.28",
+    settings: {
+      optimizer: {
+        enabled: true,
+        runs: 1,
+      }
+    }
   },
   networks: {
     sepolia: {
