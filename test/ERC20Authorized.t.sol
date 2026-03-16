@@ -29,10 +29,11 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         erc20Authorized = new ERC20Authorized();
         customToken1 = new ERC20Authorized();
         customToken2 = new ERC20Authorized();
-
+        uint256 fee1 = erc20Authorized.getRegistrationFee();
+        uint256 fee2 = erc20Authorized.getRegistrationFee();
         // Register both fake client contracts so authorize/increase/decrease/etc can be called
-        erc20Authorized.registerClient{value: 0.01 ether}(address(customToken1));
-        erc20Authorized.registerClient{value: 0.01 ether}(address(customToken2));
+        erc20Authorized.registerClient{value: fee1}(address(customToken1));
+        erc20Authorized.registerClient{value: fee2}(address(customToken2));
     }
 
     // MIGHT BE USEFUL later:
@@ -484,14 +485,15 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
     function test_registerClientWorks() external
         {
             ERC20Authorized newClient = new ERC20Authorized();
-
+            uint256 fee = erc20Authorized.getRegistrationFee();
+            uint256 authdAmount = erc20Authorized.REGISTRATION_AUTHD_AMOUNT();
             vm.expectEmit(true, true, false, true);
-            emit ClientRegistered(address(newClient), address(this), 0.01 ether, 20 * 10**18);
+            emit ClientRegistered(address(newClient), address(this), fee, authdAmount);
 
-            erc20Authorized.registerClient{value: 0.01 ether}(address(newClient));
+            erc20Authorized.registerClient{value: fee}(address(newClient));
 
             assertTrue(erc20Authorized.registeredClients(address(newClient)));
-            assertEq(erc20Authorized.balanceOf(address(newClient)), 20 * 10**18);
+            assertEq(erc20Authorized.balanceOf(address(newClient)), authdAmount);
         }
 
     function test_registerClientRevertsIfZeroAddress() external
@@ -506,14 +508,13 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
             erc20Authorized.registerClient{value: 0.01 ether}(address(customToken1));
         }
 
-    function test_registerClientRevertsIfInsufficientFee() external
-        {
-            ERC20Authorized newClient = new ERC20Authorized();
+    function test_registerClientRevertsIfInsufficientFee() external {
+            address client = makeAddr("client");
+            uint256 fee = erc20Authorized.getRegistrationFee();
 
-            vm.expectRevert();
-            erc20Authorized.registerClient{value: 0.005 ether}(address(newClient));
+            vm.expectRevert(bytes("Insufficient registration fee"));
+            erc20Authorized.registerClient{value: fee - 1}(client);
         }
-
     function test_isRegisteredClientWorks() external
         {
             assertTrue(erc20Authorized.isRegisteredClient(address(customToken1)));
@@ -568,14 +569,15 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
             erc20Authorized.approveFor(owner, authorized1, authorized2, 20);
         }
 
-    function test_withdrawTreasuryWorks() external
-        {
+    function test_withdrawTreasuryWorks() external {
             address payable treasuryReceiver = payable(makeAddr("treasuryReceiver"));
+
+            vm.deal(address(erc20Authorized), 1 ether);
 
             uint256 beforeBalance = treasuryReceiver.balance;
             uint256 treasuryBalance = address(erc20Authorized).balance;
 
-            vm.expectEmit(true, false, false, true);
+            vm.expectEmit(true, false, false, true, address(erc20Authorized));
             emit TreasuryWithdrawal(treasuryReceiver, treasuryBalance);
 
             erc20Authorized.withdrawTreasury(treasuryReceiver);
@@ -594,13 +596,12 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
             erc20Authorized.withdrawTreasury(treasuryReceiver);
         }
 
-    function test_withdrawTreasuryRevertsIfNoBalance() external
-        {
-            // First drain existing balance
+    function test_withdrawTreasuryRevertsIfNoBalance() external {
             address payable treasuryReceiver = payable(makeAddr("treasuryReceiver"));
-            erc20Authorized.withdrawTreasury(treasuryReceiver);
 
-            vm.expectRevert();
+            vm.deal(address(erc20Authorized), 0);
+
+            vm.expectRevert(bytes("No ETH to withdraw"));
             erc20Authorized.withdrawTreasury(treasuryReceiver);
         }
 }

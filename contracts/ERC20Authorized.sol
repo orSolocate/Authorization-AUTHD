@@ -15,11 +15,16 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized
     // For registration verification
     mapping(address => bool) public registeredClients;
 
-    uint256 private constant INITIAL_AUTHD_SUPPLY = 1_000_000 * 10**18;
+    uint256 private constant INITIAL_AUTHD_SUPPLY = 1_000_000;
+    // 25% of total supply reserved for client registrations
+    uint256 public constant CLIENT_AUTHD_POOL = 250_000;
 
     // Simple capstone-friendly registration economics
     uint256 public constant REGISTRATION_FEE = 0.01 ether;
-    uint256 public constant REGISTRATION_AUTHD_AMOUNT = 20 * 10**18;
+    uint256 public constant REGISTRATION_AUTHD_AMOUNT = 20;
+
+    // Remaining AUTHD reserved for clients
+    uint256 public clientPoolRemaining;
 
     // Cap = 0 is the default and means no authorization.
     // Usage: authorizedCaps[token][owner][authorized]
@@ -43,8 +48,13 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized
 
     constructor() ERC20("AuthorizedToken", "AUTHD") Ownable(msg.sender)
     {
-        // The server contract itself holds the AUTHD supply
-        _mint(address(this), INITIAL_AUTHD_SUPPLY);
+        clientPoolRemaining = CLIENT_AUTHD_POOL;
+
+        // 25% for client registrations sits in the contract
+        _mint(address(this), CLIENT_AUTHD_POOL);
+
+        // Remaining 75% goes to deployer/owner
+        _mint(msg.sender, INITIAL_AUTHD_SUPPLY - CLIENT_AUTHD_POOL);
     }
 
     /*
@@ -64,6 +74,78 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized
         return registeredClients[client];
     }
 
+    function _linearRate(uint256 x, uint256 xHigh, uint256 xLow, uint256 yHigh, uint256 yLow) internal pure returns (uint256) {
+        require(x <= xHigh && x >= xLow, "x out of range");
+        if (xHigh == xLow) return yLow;
+
+        // y = yHigh + (xHigh - x) * (yLow - yHigh) / (xHigh - xLow)
+        return yHigh + ((xHigh - x) * (yLow - yHigh)) / (xHigh - xLow);
+    }
+
+
+
+    /**
+     * Piecewise linear pricing preview.
+     *
+     * remainingWholeTokens is the number of whole AUTHD tokens left in the client pool
+     * (not 18-decimal units).
+     *
+     * Tier 1: 250000 -> 200000 maps 0.00002 ETH -> 0.0004 ETH
+     * Tier 2: 200000 ->  50000 maps 0.0004 ETH -> 0.002 ETH
+     * Tier 3:  50000 ->      0 maps 0.002 ETH -> 0.01 ETH
+     */
+    function previewAuthdRate(uint256 remainingWholeTokens) public pure returns (uint256) {
+        if (remainingWholeTokens >= 200_000) {
+            return _linearRate(
+                remainingWholeTokens,
+                250_000,
+                200_000,
+                0.00002 ether,
+                0.0004 ether
+            );
+        }
+
+        if (remainingWholeTokens >= 50_000) {
+            return _linearRate(
+                remainingWholeTokens,
+                200_000,
+                50_000,
+                0.0004 ether,
+                0.002 ether
+            );
+        }
+
+        return _linearRate(
+            remainingWholeTokens,
+            50_000,
+            0,
+            0.002 ether,
+            0.01 ether
+        );
+    }
+
+    /**
+     * Current ETH price per 1 AUTHD token (1 whole token, not 1 wei of AUTHD).
+     */
+    function getAuthdRate() public view returns (uint256) {
+        uint256 remainingWholeTokens = clientPoolRemaining / 1e18;
+        return previewAuthdRate(remainingWholeTokens);
+    }
+
+    /**
+     * ETH fee to register a client for REGISTRATION_AUTHD_AMOUNT (20 AUTHD).
+     */
+    function getRegistrationFee() public view returns (uint256) {
+        uint256 dynamicFee = (REGISTRATION_AUTHD_AMOUNT * getAuthdRate()) / 1e18;
+
+        if (dynamicFee < REGISTRATION_FEE) {
+            return REGISTRATION_FEE;
+        }
+
+        return dynamicFee;
+    }
+
+
     /**
      * Register a client token contract so it can use the AUTHD authorization logic.
      *
@@ -72,16 +154,22 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized
      * - server marks `client` as registered
      * - server sends a fixed amount of AUTHD to the client address
      */
-    function registerClient(address client) external payable
-    {
+    /**
+     * Register a client token contract.
+     * The caller pays ETH according to the current rate and the client receives 20 AUTHD.
+     */
+    function registerClient(address client) external payable {
         require(client != address(0), "Invalid client address");
         require(!registeredClients[client], "Client already registered");
-        require(msg.value >= REGISTRATION_FEE, "Insufficient registration fee");
-        require(balanceOf(address(this)) >= REGISTRATION_AUTHD_AMOUNT, "Insufficient AUTHD supply");
 
+        uint256 fee = getRegistrationFee();
+        require(msg.value >= fee, "Insufficient registration fee");
+        require(clientPoolRemaining >= REGISTRATION_AUTHD_AMOUNT, "Client pool exhausted");
+        require(balanceOf(address(this)) >= REGISTRATION_AUTHD_AMOUNT, "Insufficient AUTHD in pool");
+        // TODO: use custom errors instead of `require` to reduce code size
         registeredClients[client] = true;
+        clientPoolRemaining -= REGISTRATION_AUTHD_AMOUNT;
 
-        // send AUTHD to the client contract address
         _transfer(address(this), client, REGISTRATION_AUTHD_AMOUNT);
 
         emit ClientRegistered(client, msg.sender, msg.value, REGISTRATION_AUTHD_AMOUNT);
