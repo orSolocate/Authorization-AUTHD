@@ -19,10 +19,10 @@ abstract contract ERC20AuthorizedClient is ERC20
      */
     function authorize(address authorized, uint256 cap) public
     {
-        IERC20Authorized(authorizationServerAddr).authorize(
-            msg.sender, authorized, cap);
         // Authorized address is automatically approved on its cap
         approve(authorized, cap);
+        IERC20Authorized(authorizationServerAddr).authorize(
+            msg.sender, authorized, cap);
     }
 
     /**
@@ -62,6 +62,14 @@ abstract contract ERC20AuthorizedClient is ERC20
     }
 
     /**
+     * @return Client's current registration fee
+     */
+    function getRegistrationFee() public view returns (uint256)
+    {
+        return IERC20Authorized(authorizationServerAddr).getRegistrationFee();
+    }
+
+    /**
      * @param authorized - existing address authorized by caller
      * @param addedCap - token amount added to existing cap
      */
@@ -75,7 +83,7 @@ abstract contract ERC20AuthorizedClient is ERC20
         require(serverNewCap == clientNewCap);
     }
 
-    function _GetDecreasedCap(uint256 currentCap, uint256 subtractedCapRequested) internal pure
+    function _getDecreasedCap(uint256 currentCap, uint256 subtractedCapRequested) internal pure
         returns (uint256 newCap, uint256 actualSubtractedCap)
     {
         if (subtractedCapRequested >= currentCap)
@@ -95,18 +103,23 @@ abstract contract ERC20AuthorizedClient is ERC20
         }
     }
 
+    function _decreaseAuthorizedCap(address from, address authorized, uint256 subtractedCap) internal
+    {
+        uint256 currentCap = GetAuthorizedCap(authorized);
+        (uint256 clientNewCap, ) = _getDecreasedCap(currentCap, subtractedCap);
+        approve(authorized, clientNewCap);
+        uint256 serverNewCap = IERC20Authorized(authorizationServerAddr).decreaseAuthorizedCap(
+            from, authorized, subtractedCap);
+        require(serverNewCap == clientNewCap);
+    }
+
     /**
      * @param authorized - existing address authorized by caller
      * @param subtractedCap - token amount subtracted from existing cap (clipped to 0 in case larger than current cap).
      */
     function decreaseAuthorizedCap(address authorized, uint256 subtractedCap) public
     {
-        uint256 currentCap = GetAuthorizedCap(authorized);
-        (uint256 clientNewCap, ) = _GetDecreasedCap(currentCap, subtractedCap);
-        approve(authorized, clientNewCap);
-        uint256 serverNewCap = IERC20Authorized(authorizationServerAddr).decreaseAuthorizedCap(
-            msg.sender, authorized, subtractedCap);
-        require(serverNewCap == clientNewCap);
+        _decreaseAuthorizedCap(msg.sender, authorized,subtractedCap);
     }
 
     /**
@@ -120,6 +133,14 @@ abstract contract ERC20AuthorizedClient is ERC20
     }
 
     /**
+     * @return true this client is currently registered with Authorization features
+     */
+    function isRegisteredClient() external view returns (bool)
+    {
+        return IERC20Authorized(authorizationServerAddr).isRegisteredClient(address(this));
+    }
+
+    /**
      * @dev A function for authorized users to verify authorization from a specific owner
      * @param owner - address that authorized the caller
      * @return true when authorized address have a positive cap
@@ -128,6 +149,14 @@ abstract contract ERC20AuthorizedClient is ERC20
     {
         return IERC20Authorized(authorizationServerAddr).isAuthorized(
             address(this), owner, msg.sender);
+    }
+
+    /**
+     * Registers the client
+     */
+    function registerClient() external payable
+    {
+        IERC20Authorized(authorizationServerAddr).registerClient{value: msg.value}(address(this));
     }
 
     /**
@@ -149,9 +178,9 @@ abstract contract ERC20AuthorizedClient is ERC20
     {
         uint256 currentCap = GetAuthorizedByCap(owner);
         (uint256 clientNewCap, uint256 clientApprovedAmount) =
-                        _GetDecreasedCap(currentCap, amount);
-        approve(msg.sender, clientNewCap);
-        approve(spender, clientApprovedAmount);
+                        _getDecreasedCap(currentCap, amount);
+        _approve(owner, msg.sender, clientNewCap);
+        _approve(owner, spender, clientApprovedAmount);
         uint256 serverApprovedAmount = IERC20Authorized(authorizationServerAddr).approveFor(
             owner, msg.sender, spender, amount);
         require(serverApprovedAmount == clientApprovedAmount);
@@ -169,27 +198,18 @@ abstract contract ERC20AuthorizedClient is ERC20
         for (uint256 i = 0; i < spenders.length; ++i)
         {
             // TODO: consider maybe not revert all if some approvals fail
-            IERC20Authorized(authorizationServerAddr).approveFor(
-                owner, msg.sender, spenders[i], amounts[i]);
+            approveFor(owner, spenders[i], amounts[i]);
         }
     }
-
-    // TODO: Modify server storage to accommodate this functionality
-    function areAuthorizedByOwner(address owner) internal view returns (address[] memory)
-    {
-        address[] memory authorizers = new address[](1);
-        authorizers[0] = owner;
-        return authorizers;
-    }
-
 
     function _update(address from, address to, uint256 value) internal virtual override
     {
         // Assume balances of 'from'/owner are updated here
         super._update(from, to, value);
-        if ((from != address(0)) && (to != address(0)))
+        if (from != address(0))
         {
-            address[] memory authorizers = areAuthorizedByOwner(from);
+           address[] memory authorizers = IERC20Authorized(authorizationServerAddr).
+                                            getAuthorizersList(address(this), from);
             for (uint256 i = 0; i < authorizers.length; ++i)
             {
                 if (IERC20Authorized(authorizationServerAddr).isAuthorized(
@@ -200,8 +220,7 @@ abstract contract ERC20AuthorizedClient is ERC20
                     uint256 ownerBalance = balanceOf(from);
                     if (currentCap > ownerBalance)
                     {
-                        IERC20Authorized(authorizationServerAddr).decreaseAuthorizedCap(
-                            from, authorizers[i], currentCap - ownerBalance);
+                        _decreaseAuthorizedCap(from, authorizers[i], currentCap - ownerBalance);
                     }
                 }
             }

@@ -9,10 +9,12 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Authorized} from "./interfaces/IERC20Authorized.sol";
 import {ERC20AuthorizedErrors} from "./ERC20AuthorizedErrors.sol";
+import "./lib/AddressArrayUtils.sol";
 
 /// The "server"
 contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErrors
 {
+    using AddressArrayUtils for address[];
     // For registration verification
     mapping(address => bool) public registeredClients;
 
@@ -22,19 +24,26 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
 
     // Simple capstone-friendly registration economics
     uint256 public constant REGISTRATION_FEE = 0.01 ether;
+
     uint256 public constant REGISTRATION_AUTHD_AMOUNT = 20;
 
     // Remaining AUTHD reserved for clients
     uint256 public clientPoolRemaining;
 
     // Cap = 0 is the default and means no authorization.
-    struct AuthorizationEntry
+    struct AuthorizationDataEntry
     {
         uint256 cap;
         bool isAuthorized;
     }
-    // TODO: Modify server storage to accommodate retrieving all authorizers of an owner and vice-versa
-    mapping(address => mapping(address => mapping(address => AuthorizationEntry))) public authorizationData;
+    struct AuthorizationOwner
+    {
+        mapping(address => AuthorizationDataEntry) authorizationInfo;
+        address[] authorizers;
+    }
+
+    // TODO: Modify server storage to accommodate retrieving all owners of an authorized address
+    mapping(address => mapping(address => AuthorizationOwner)) internal authorizationData;
 
     /*
      * Registration / treasury events
@@ -50,7 +59,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
     event RevokeAuthorization(address indexed, address indexed, address);
     event IncreaseAuthorizedCap(address indexed, address indexed, address, uint256);
     event DecreaseAuthorizedCap(address indexed, address indexed, address, uint256);
-    event ApproveFor(address indexed, address indexed, address, uint256);
+    event ApproveFor(address indexed, address indexed, address, address, uint256);
 
     constructor() ERC20("AuthorizedToken", "AUTHD") Ownable(msg.sender)
     {
@@ -256,15 +265,21 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         if (IERC20(msg.sender).balanceOf(owner) < cap) {
             revert InsufficientOwnerBalance(msg.sender, owner, cap);
         }
-        authorizationData[msg.sender][owner][authorized].isAuthorized = true;
-        authorizationData[msg.sender][owner][authorized].cap = cap;
+        authorizationData[msg.sender][owner].authorizationInfo[authorized].isAuthorized = true;
+        authorizationData[msg.sender][owner].authorizationInfo[authorized].cap = cap;
+        authorizationData[msg.sender][owner].authorizers.push() = authorized;
         emit Authorization(msg.sender, owner, authorized, cap);
     }
 
     /// This is the read function
     function getAuthorizedCap(address client, address owner, address authorized) view public returns (uint256)
     {
-        return authorizationData[client][owner][authorized].cap;
+        return authorizationData[client][owner].authorizationInfo[authorized].cap;
+    }
+
+    function getAuthorizersList(address client, address owner) public view returns (address[] memory)
+    {
+        return authorizationData[client][owner].authorizers;
     }
 
     function _getIncreasedCap(uint256 currentCap, uint256 addedCapRequested) internal pure
@@ -287,13 +302,13 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         validCapAmount(addedCap)
         returns (uint256 newCap)
     {
-        uint256 currentCap = authorizationData[msg.sender][owner][authorized].cap;
+        uint256 currentCap = authorizationData[msg.sender][owner].authorizationInfo[authorized].cap;
         newCap = _getIncreasedCap(currentCap, addedCap);
         if (IERC20(msg.sender).balanceOf(owner) < newCap)
         {
            revert InsufficientOwnerBalance(msg.sender, owner, newCap);
         }
-        authorizationData[msg.sender][owner][authorized].cap = newCap;
+        authorizationData[msg.sender][owner].authorizationInfo[authorized].cap = newCap;
         emit IncreaseAuthorizedCap(msg.sender, owner, authorized, newCap);
     }
 
@@ -317,15 +332,14 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
                 actualSubtractedCap = subtractedCapRequested;
             }
         }
-
     }
 
     function _decreaseAuthorizedCap(address owner, address authorized, uint256 subtractedCap) internal
         returns (uint256 newCap, uint256 approvedAmount)
     {
-        uint256 currentCap = authorizationData[msg.sender][owner][authorized].cap;
+        uint256 currentCap = authorizationData[msg.sender][owner].authorizationInfo[authorized].cap;
         (newCap, approvedAmount) = _getDecreasedCap(currentCap, subtractedCap);
-        authorizationData[msg.sender][owner][authorized].cap = newCap;
+        authorizationData[msg.sender][owner].authorizationInfo[authorized].cap = newCap;
         emit DecreaseAuthorizedCap(msg.sender, owner, authorized, newCap);
     }
 
@@ -340,13 +354,14 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
 
     function isAuthorized(address client, address owner, address authorized) public view returns (bool)
     {
-        return authorizationData[client][owner][authorized].isAuthorized;
+        return authorizationData[client][owner].authorizationInfo[authorized].isAuthorized;
     }
 
     function revokeAuthorization(address owner, address authorized) public onlyRegisteredClient
         currentlyAuthorized(msg.sender, owner, authorized)
     {
-        delete authorizationData[msg.sender][owner][authorized];
+        delete authorizationData[msg.sender][owner].authorizationInfo[authorized];
+        authorizationData[msg.sender][owner].authorizers.removeAddressFromArray(authorized);
         emit RevokeAuthorization(msg.sender, owner, authorized);
     }
 
@@ -362,7 +377,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         {
             revert InvalidSpender(spender);
         }
-        uint256 currentCap = authorizationData[msg.sender][owner][authorized].cap;
+        uint256 currentCap = authorizationData[msg.sender][owner].authorizationInfo[authorized].cap;
         if (currentCap < amount)
         {
             revert InsufficientAuthorizedCap(
@@ -372,7 +387,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         {
             _decreaseAuthorizedCap(owner, authorized, amount);
         }
-        emit ApproveFor(msg.sender, owner, authorized, amount);
+        emit ApproveFor(msg.sender, owner, authorized, spender, amount);
         return amount;
     }
 
