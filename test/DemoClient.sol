@@ -12,4 +12,9 @@ contract DemoClient is ERC20("DemoClient", "DEMO"), ERC20AuthorizedClient
     {
         return super._update(from, to, value);
     }
+
+    function burn(uint256 amount) public virtual
+    {
+        _burn(_msgSender(), amount);
+    }
 }

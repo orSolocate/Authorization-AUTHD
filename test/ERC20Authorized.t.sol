@@ -11,7 +11,7 @@ interface IERC20AuthorizedEvents
     event RevokeAuthorization(address indexed, address indexed, address);
     event IncreaseAuthorizedCap(address indexed, address indexed, address, uint256);
     event DecreaseAuthorizedCap(address indexed, address indexed, address, uint256);
-    event ApproveFor(address indexed, address indexed, address, uint256);
+    event ApproveFor(address indexed, address indexed, address, address, uint256);
     event ClientRegistered(address indexed client, address indexed payer, uint256 ethPaid, uint256 authdSent);
     event TreasuryWithdrawal(address indexed to, uint256 amount);
 }
@@ -123,6 +123,23 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         // Verify the authorization cap depends on owner's balance, and not on other authorization caps
         erc20Authorized.authorize(owner, authorized2, 100);
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized2), 100, "Cap should updated after authorizing");
+    }
+
+    function test_getAuthorizersList() external
+    {
+        deal(address(customToken1), owner, 50);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 10);
+        erc20Authorized.authorize(owner, authorized2, 20);
+        address[] memory authorizers =  new address[](2);
+        authorizers[0] = authorized1;
+        authorizers[1] = authorized2;
+        assertEq(erc20Authorized.getAuthorizersList(address(customToken1), owner), authorizers);
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+        delete authorizers;
+        authorizers =  new address[](1);
+        authorizers[0] = authorized2;
+        assertEq(erc20Authorized.getAuthorizersList(address(customToken1), owner), authorizers);
     }
 
     function test_revokeUnauthorized() external
@@ -383,7 +400,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         erc20Authorized.authorize(owner, authorized1, amount / 2);
         vm.recordLogs();
         vm.expectEmit(true, true, false, true);
-        emit ApproveFor(address(customToken1), owner,  authorized1, 0);
+        emit ApproveFor(address(customToken1), owner,  authorized1, authorized2, 0);
         erc20Authorized.approveFor(owner, authorized1, authorized2, 0);
         Vm.Log[] memory entries = vm.getRecordedLogs();
         assertEq(entries.length, 2, "Only 2 events should have been emitted");
@@ -409,7 +426,7 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         vm.expectEmit(true, true, false, true);
         emit DecreaseAuthorizedCap(address(customToken1), owner,  authorized1, 3 * amount / 4);
         vm.expectEmit(true, true, false, true);
-        emit ApproveFor(address(customToken1), owner,  authorized1, amount / 4);
+        emit ApproveFor(address(customToken1), owner,  authorized1, authorized2, amount / 4);
         erc20Authorized.approveFor(owner, authorized1, authorized2, amount / 4);
         Vm.Log[] memory entries = vm.getRecordedLogs();
         assertEq(entries.length, 4, "Only 4 events should have been emitted");
@@ -441,83 +458,6 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 50, "Cap should updated after approveFor");
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized2), 30, "Cap should updated after approveFor");
     }
-
-    /*
-    // TODO: Consider moving this functionality to Client
-    function test_approveForEmptySpendersOrAmounts() external
-    {
-        uint256 amount = 100;
-        uint256[] memory amountsEmpty = new uint256[](0);
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = amount / 2;
-        amounts[1] = amount / 2;
-        uint256[] memory amountsDiffLength =  new uint256[](1);
-        amountsDiffLength[0] = amount / 2;
-        address[] memory spendersEmpty = new address[](0);
-        address[] memory spenders = new address[](2);
-        spenders[0] = authorized2;
-        spenders[1] = authorized2;
-
-        deal(address(customToken1), owner, amount);
-        vm.startPrank(address(customToken1));
-        erc20Authorized.authorize(owner, authorized1, amount);
-        vm.expectRevert();
-        erc20Authorized.approveFor(owner, authorized1, spendersEmpty, amounts);
-        vm.expectRevert();
-        erc20Authorized.approveFor(owner, authorized1, spenders, amountsEmpty);
-        vm.expectRevert();
-        erc20Authorized.approveFor(owner, authorized1, spenders, amountsDiffLength);
-    }
-
-    // TODO: Consider moving this functionality to Client
-    function test_approveForConstraintsForEachSpender() external
-    {
-        uint256 amount = 100;
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = amount / 2;
-        amounts[1] = amount / 2;
-        uint256[] memory amountsWithEmpty = new uint256[](2);
-        amountsWithEmpty[0] = amount / 2;
-        amountsWithEmpty[1] = 0;
-        address[] memory spendersWithOwner = new address[](2);
-        spendersWithOwner[0] = authorized2;
-        spendersWithOwner[1] = owner;
-        address[] memory spendersWithAuthorized = new address[](2);
-        spendersWithAuthorized[0] = authorized2;
-        spendersWithAuthorized[1] = authorized1;
-        address[] memory spenders = new address[](2);
-        spenders[0] = authorized2;
-        spenders[1] = authorized2;
-
-        deal(address(customToken1), owner, amount);
-        vm.startPrank(address(customToken1));
-        erc20Authorized.authorize(owner, authorized1, amount);
-        vm.expectRevert();
-        erc20Authorized.approveFor(owner, authorized1, spenders, amountsWithEmpty);
-        vm.expectRevert();
-        erc20Authorized.approveFor(owner, authorized1, spendersWithOwner, amounts);
-        vm.expectRevert();
-        erc20Authorized.approveFor(owner, authorized1, spendersWithAuthorized, amounts);
-    }
-
-    // TODO: Consider moving this functionality to Client
-    function test_approveForSameSpenders() external
-    {
-        uint256 amount = 100;
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = amount / 2;
-        amounts[1] = amount / 4;
-        address[] memory spenders = new address[](2);
-        spenders[0] = authorized2;
-        spenders[1] = authorized2;
-
-        deal(address(customToken1), owner, amount);
-        vm.startPrank(address(customToken1));
-        erc20Authorized.authorize(owner, authorized1, amount);
-        erc20Authorized.approveFor(owner, authorized1, spenders, amounts);
-        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), amount / 4, "Cap should updated after approveFor");
-    }
-    */
 
     function test_registerClientWorks() external
         {

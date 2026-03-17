@@ -11,11 +11,19 @@ interface IERC20Authorized is IERC20
 
     function getAuthorizedCap(address client, address owner, address authorized) view external returns (uint256);
 
+    function getAuthorizersList(address client, address owner) external view returns (address[] memory);
+
+    function getRegistrationFee() external view returns (uint256);
+
     function increaseAuthorizedCap(address owner, address authorized, uint256 addedCap) external returns (uint256);
 
     function decreaseAuthorizedCap(address owner, address authorized, uint256 subtractedCap) external returns (uint256);
 
     function isAuthorized(address client, address owner, address authorized) external view returns (bool);
+
+    function isRegisteredClient(address client) external view returns (bool);
+
+    function registerClient(address client) external payable;
 
     function revokeAuthorization(address owner, address authorized) external;
 
