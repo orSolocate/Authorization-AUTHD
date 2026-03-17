@@ -273,7 +273,8 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 10, "Cap should updated after authorizing");
         vm.expectEmit(true, true, false, true);
         emit IncreaseAuthorizedCap(address(customToken1), owner, authorized1, 60);
-        erc20Authorized.increaseAuthorizedCap(owner, authorized1, 50);
+        uint256 newCap = erc20Authorized.increaseAuthorizedCap(owner, authorized1, 50);
+        assertEq(newCap, 60, "returned value from increase should be the new cap");
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 60, "Cap should updated after increase");
         vm.expectEmit(true, true, false, true);
         emit IncreaseAuthorizedCap(address(customToken1), owner, authorized1, 80);
@@ -281,7 +282,8 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 80, "Cap should updated after increase");
         vm.expectEmit(true, true, false, true);
         emit DecreaseAuthorizedCap(address(customToken1), owner, authorized1, 30);
-        erc20Authorized.decreaseAuthorizedCap(owner, authorized1, 50);
+        newCap = erc20Authorized.decreaseAuthorizedCap(owner, authorized1, 50);
+        assertEq(newCap, 30, "returned value from decrease should be the new cap");
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 30, "Cap should updated after decrease");
         vm.expectEmit(true, true, false, true);
         emit DecreaseAuthorizedCap(address(customToken1), owner, authorized1, 20);
@@ -299,7 +301,8 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         erc20Authorized.authorize(owner, authorized1, 50);
         vm.expectEmit(true, true, false, true);
         emit IncreaseAuthorizedCap(address(customToken1), owner, authorized1, maxInt);
-        erc20Authorized.increaseAuthorizedCap(owner, authorized1, maxInt);
+        uint256 newCap = erc20Authorized.increaseAuthorizedCap(owner, authorized1, maxInt);
+        assertEq(newCap, maxInt, "returned value from increase should be the new cap");
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), maxInt, "Cap should clip overflow to maxInt on increase");
     }
 
@@ -311,7 +314,8 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         erc20Authorized.authorize(owner, authorized1, amount / 2);
         vm.expectEmit(true, true, false, true);
         emit DecreaseAuthorizedCap(address(customToken1), owner, authorized1, 0);
-        erc20Authorized.decreaseAuthorizedCap(owner, authorized1, amount / 2);
+        uint256 newCap = erc20Authorized.decreaseAuthorizedCap(owner, authorized1, amount / 2);
+        assertEq(newCap, 0, "returned value from decrease should be the new cap");
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 0, "Cap should decrease");
     }
 
