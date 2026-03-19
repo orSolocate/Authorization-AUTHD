@@ -277,10 +277,10 @@ contract ERC20Authorized is ERC20, IERC20Authorized, ERC20AuthorizedErrors, Owna
 
     function authorize(address owner, address authorized, uint256 cap)
         public
-        onlyRegisteredClient
+       
         validAddress(owner)
         validAddress(authorized)
-        validCapAmount(cap)
+    
     {
         if (owner == authorized) {
             revert SelfAuthorizationProhibited();
