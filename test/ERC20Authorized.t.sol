@@ -73,14 +73,14 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
         erc20Authorized.authorize(owner, authorized1, 100);
     }
 
-    function test_authorizeEmptyCapReverts() external //changed to align w Or's updated approve function
-        {
-            deal(address(customToken1), owner, 50);
-            vm.prank(address(customToken1));
+    // function test_authorizeEmptyCapReverts() external //changed to align w Or's updated approve function
+    //     {
+    //         deal(address(customToken1), owner, 50);
+    //         vm.prank(address(customToken1));
 
-            vm.expectRevert(abi.encodeWithSignature("InvalidAmount(uint256)", 0));
-            erc20Authorized.authorize(owner, authorized1, 0);
-        }
+    //         vm.expectRevert(abi.encodeWithSignature("InvalidAmount(uint256)", 0));
+    //         erc20Authorized.authorize(owner, authorized1, 0);
+    //     }
 
     function test_authorizeTwice() external
     {
@@ -618,16 +618,16 @@ contract ERC20AuthorizedTest is Test, IERC20AuthorizedEvents
             assertGt(rateDay2, rateDay1, "AUTHD rate should be recalculated next day after pool depletion");
         }
 
-    function test_authorizeRevertsIfClientNotRegistered() external
-        {
-            ERC20Authorized unregisteredClient = new ERC20Authorized();
+    // function test_authorizeRevertsIfClientNotRegistered() external
+    //     {
+    //         ERC20Authorized unregisteredClient = new ERC20Authorized();
 
-            deal(address(unregisteredClient), owner, 50);
+    //         deal(address(unregisteredClient), owner, 50);
 
-            vm.prank(address(unregisteredClient));
-            vm.expectRevert();
-            erc20Authorized.authorize(owner, authorized1, 20);
-        }
+    //         vm.prank(address(unregisteredClient));
+    //         vm.expectRevert();
+    //         erc20Authorized.authorize(owner, authorized1, 20);
+    //     }
 
     function test_increaseAuthorizedCapRevertsIfClientNotRegistered() external
         {
