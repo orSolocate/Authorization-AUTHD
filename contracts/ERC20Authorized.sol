@@ -255,7 +255,6 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         if (IERC20(msg.sender).balanceOf(owner) < cap) {
             revert InsufficientOwnerBalance(msg.sender, owner, cap);
         }
-
         authorizationData[msg.sender][owner][authorized].isAuthorized = true;
         authorizationData[msg.sender][owner][authorized].cap = cap;
         emit Authorization(msg.sender, owner, authorized, cap);
@@ -282,8 +281,10 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
                 // Overflow occurred
                 newCap = type(uint256).max;
             }
-
-            require(IERC20(msg.sender).balanceOf(owner) >= newCap, "Cannot authorize more than balance");
+            if (IERC20(msg.sender).balanceOf(owner) < newCap)
+            {
+                revert InsufficientOwnerBalance(msg.sender, owner, newCap);
+            }
             authorizationData[msg.sender][owner][authorized].cap = newCap;
             emit IncreaseAuthorizedCap(msg.sender, owner, authorized, newCap);
             return newCap;
@@ -345,7 +346,12 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
             revert InvalidSpender(spender);
         }
         // ERC20 allows approval > balance, so leave balance check out
-        require(getAuthorizedCap(msg.sender, owner, authorized) >= amount, "Authorized doesn't have enough cap");
+        uint256 currentCap = getAuthorizedCap(msg.sender, owner, authorized);
+        if (currentCap < amount)
+        {
+            revert InsufficientAuthorizedCap(
+                msg.sender, owner, authorized, currentCap, amount);
+        }
         if (amount > 0)
         {
             _decreaseAuthorizedCap(owner, authorized, amount);
