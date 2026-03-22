@@ -29,10 +29,28 @@ abstract contract ERC20AuthorizedClient is ERC20
      * @param authorized - existing address authorized by caller
      * @return authorization cap or 0 if not authorized
      */
-    function GetAuthorizedCap(address authorized) view public returns (uint256)
+    function getAuthorizedCap(address authorized) view public returns (uint256)
     {
         return IERC20Authorized(authorizationServerAddr).getAuthorizedCap(
             address(this), msg.sender, authorized);
+    }
+
+    /**
+     * @return a list of addresses that are currently authorized by the caller (owner)
+     */
+    function getAuthorizersList() public view returns (address[] memory)
+    {
+        return IERC20Authorized(authorizationServerAddr).getAuthorizersList(
+            address(this),  msg.sender);
+    }
+
+    /**
+     * @return a list of addresses that are currently delegating the caller (authorized user)
+     */
+    function getOwnersList() public view returns (address[] memory)
+    {
+        return IERC20Authorized(authorizationServerAddr).getOwnersList(
+            address(this),  msg.sender);
     }
 
     /**
@@ -40,8 +58,7 @@ abstract contract ERC20AuthorizedClient is ERC20
      * @param owner - The address that already authorized the caller
      * @return authorization cap or 0 if not authorized
      */
-
-    function GetAuthorizedByCap(address owner) view public returns (uint256)
+    function getAuthorizedByCap(address owner) view public returns (uint256)
     {
         return IERC20Authorized(authorizationServerAddr).getAuthorizedCap(
             address(this), owner, msg.sender);
@@ -75,7 +92,7 @@ abstract contract ERC20AuthorizedClient is ERC20
      */
     function increaseAuthorizedCap(address authorized, uint256 addedCap) public
     {
-        uint256 currentCap = GetAuthorizedCap(authorized);
+        uint256 currentCap = getAuthorizedCap(authorized);
         uint256 clientNewCap = _getIncreasedCap(currentCap, addedCap);
         approve(authorized, clientNewCap);
         uint256 serverNewCap = IERC20Authorized(authorizationServerAddr).increaseAuthorizedCap(
@@ -105,7 +122,7 @@ abstract contract ERC20AuthorizedClient is ERC20
 
     function _decreaseAuthorizedCap(address from, address authorized, uint256 subtractedCap) internal
     {
-        uint256 currentCap = GetAuthorizedCap(authorized);
+        uint256 currentCap = getAuthorizedCap(authorized);
         (uint256 clientNewCap, ) = _getDecreasedCap(currentCap, subtractedCap);
         approve(authorized, clientNewCap);
         uint256 serverNewCap = IERC20Authorized(authorizationServerAddr).decreaseAuthorizedCap(
@@ -133,14 +150,6 @@ abstract contract ERC20AuthorizedClient is ERC20
     }
 
     /**
-     * @return true this client is currently registered with Authorization features
-     */
-    function isRegisteredClient() external view returns (bool)
-    {
-        return IERC20Authorized(authorizationServerAddr).isRegisteredClient(address(this));
-    }
-
-    /**
      * @dev A function for authorized users to verify authorization from a specific owner
      * @param owner - address that authorized the caller
      * @return true when authorized address have a positive cap
@@ -152,11 +161,19 @@ abstract contract ERC20AuthorizedClient is ERC20
     }
 
     /**
+     * @return true this client is currently registered with Authorization features
+     */
+    function isRegisteredClient() public view returns (bool)
+    {
+        return IERC20Authorized(authorizationServerAddr).isRegisteredClient(address(this));
+    }
+
+    /**
      * Registers the client
      */
-    function registerClient() external payable
+    function registerClient() public payable
     {
-        IERC20Authorized(authorizationServerAddr).registerClient{value: msg.value}(address(this));
+        IERC20Authorized(authorizationServerAddr).registerClient{value: msg.value}();
     }
 
     /**
@@ -176,7 +193,7 @@ abstract contract ERC20AuthorizedClient is ERC20
      */
     function approveFor(address owner, address spender, uint256 amount) public
     {
-        uint256 currentCap = GetAuthorizedByCap(owner);
+        uint256 currentCap = getAuthorizedByCap(owner);
         (uint256 clientNewCap, uint256 clientApprovedAmount) =
                         _getDecreasedCap(currentCap, amount);
         _approve(owner, msg.sender, clientNewCap);
@@ -197,7 +214,6 @@ abstract contract ERC20AuthorizedClient is ERC20
             "Spenders and amounts array length should be non-zero and same");
         for (uint256 i = 0; i < spenders.length; ++i)
         {
-            // TODO: consider maybe not revert all if some approvals fail
             approveFor(owner, spenders[i], amounts[i]);
         }
     }
