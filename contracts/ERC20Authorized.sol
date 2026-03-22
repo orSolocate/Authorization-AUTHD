@@ -16,21 +16,20 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
 {
     using AddressArrayUtils for address[];
     // For registration verification
-    mapping(address => bool) public registeredClients;
+    mapping(address => bool) public isRegisteredClient;
 
-    uint256 private constant INITIAL_AUTHD_SUPPLY = 1_000_000;
+    uint256 internal constant INITIAL_AUTHD_SUPPLY = 1_000_000;
     // 25% of total supply reserved for client registrations
-    uint256 public constant CLIENT_AUTHD_POOL = 250_000;
+    uint256 internal constant CLIENT_AUTHD_POOL = 250_000;
 
     // Simple capstone-friendly registration economics
-    uint256 public constant REGISTRATION_FEE = 0.01 ether;
+    uint256 internal constant REGISTRATION_FEE = 0.01 ether;
 
     uint256 public constant REGISTRATION_AUTHD_AMOUNT = 20;
 
     // Remaining AUTHD reserved for clients
-    uint256 public clientPoolRemaining;
+    uint256 internal clientPoolRemaining;
 
-    // Cap = 0 is the default and means no authorization.
     struct AuthorizationDataEntry
     {
         uint256 cap;
@@ -41,25 +40,13 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         mapping(address => AuthorizationDataEntry) authorizationInfo;
         address[] authorizers;
     }
+    struct AuthorizationClient
+    {
+        mapping(address => AuthorizationOwner) authorizationOwner;
+        mapping (address => address[]) delegatedBy;
+    }
 
-    // TODO: Modify server storage to accommodate retrieving all owners of an authorized address
-    mapping(address => mapping(address => AuthorizationOwner)) internal authorizationData;
-
-    /*
-     * Registration / treasury events
-     */
-    event ClientRegistered(address indexed client, address indexed payer, uint256 ethPaid, uint256 authdSent);
-    event ClientRegistrationRevoked(address indexed client);
-    event TreasuryWithdrawal(address indexed to, uint256 amount);
-
-    /*
-     * INTERFACE / AUTHORIZATION EVENTS
-     */
-    event Authorization(address indexed, address indexed, address, uint256);
-    event RevokeAuthorization(address indexed, address indexed, address);
-    event IncreaseAuthorizedCap(address indexed, address indexed, address, uint256);
-    event DecreaseAuthorizedCap(address indexed, address indexed, address, uint256);
-    event ApproveFor(address indexed, address indexed, address, address, uint256);
+    mapping(address => AuthorizationClient) internal authorizationData;
 
     constructor() ERC20("AuthorizedToken", "AUTHD") Ownable(msg.sender)
     {
@@ -80,13 +67,11 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
 
     modifier onlyRegisteredClient()
     {
-        require(registeredClients[msg.sender], "Client contract not registered");
+        if (!isRegisteredClient[msg.sender])
+        {
+            revert ClientNotRegistered(msg.sender);
+        }
         _;
-    }
-
-    function isRegisteredClient(address client) public view returns (bool)
-    {
-        return registeredClients[client];
     }
 
     function _linearRate(uint256 x, uint256 xHigh, uint256 xLow, uint256 yHigh, uint256 yLow) internal pure returns (uint256) {
@@ -96,8 +81,6 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         // y = yHigh + (xHigh - x) * (yLow - yHigh) / (xHigh - xLow)
         return yHigh + ((xHigh - x) * (yLow - yHigh)) / (xHigh - xLow);
     }
-
-
 
     /**
      * Piecewise linear pricing preview.
@@ -109,7 +92,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
      * Tier 2: 200000 ->  50000 maps 0.0004 ETH -> 0.002 ETH
      * Tier 3:  50000 ->      0 maps 0.002 ETH -> 0.01 ETH
      */
-    function previewAuthdRate(uint256 remainingWholeTokens) public pure returns (uint256) {
+    function previewAuthdRate(uint256 remainingWholeTokens) internal pure returns (uint256) {
         if (remainingWholeTokens >= 200_000) {
             return _linearRate(
                 remainingWholeTokens,
@@ -142,7 +125,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
     /**
      * Current ETH price per 1 AUTHD token (1 whole token, not 1 wei of AUTHD).
      */
-    function getAuthdRate() public view returns (uint256) {
+    function getAuthdRate() internal view returns (uint256) {
         uint256 remainingWholeTokens = clientPoolRemaining / 1e18;
         return previewAuthdRate(remainingWholeTokens);
     }
@@ -160,7 +143,6 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         return dynamicFee;
     }
 
-
     /**
      * Register a client token contract so it can use the AUTHD authorization logic.
      *
@@ -171,23 +153,33 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
      */
     /**
      * Register a client token contract.
-     * The caller pays ETH according to the current rate and the client receives 20 AUTHD.
+     * The caller (client) pays ETH according to the current rate and receives back AUTHD tokens
      */
-    function registerClient(address client) external payable {
-        require(client != address(0), "Invalid client address");
-        require(!registeredClients[client], "Client already registered");
-
+    function registerClient() public payable validAddress(msg.sender) {
+        address client = msg.sender;
+        if (isRegisteredClient[client])
+        {
+            revert AlreadyRegistered(client);
+        }
         uint256 fee = getRegistrationFee();
-        require(msg.value >= fee, "Insufficient registration fee");
-        require(clientPoolRemaining >= REGISTRATION_AUTHD_AMOUNT, "Client pool exhausted");
-        require(balanceOf(address(this)) >= REGISTRATION_AUTHD_AMOUNT, "Insufficient AUTHD in pool");
-        // TODO: use custom errors instead of `require` to reduce code size
-        registeredClients[client] = true;
+        if (msg.value < fee)
+        {
+            revert InsufficientRegistrationFee(msg.value, fee);
+        }
+        if (clientPoolRemaining < REGISTRATION_AUTHD_AMOUNT)
+        {
+            revert ClientPoolExhuasted(clientPoolRemaining, REGISTRATION_AUTHD_AMOUNT);
+        }
+        if (balanceOf(address(this)) < REGISTRATION_AUTHD_AMOUNT)
+        {
+            revert InsufficientAuthdSupply(balanceOf(address(this)), REGISTRATION_AUTHD_AMOUNT);
+        }
+        isRegisteredClient[client] = true;
         clientPoolRemaining -= REGISTRATION_AUTHD_AMOUNT;
 
         _transfer(address(this), client, REGISTRATION_AUTHD_AMOUNT);
 
-        emit ClientRegistered(client, msg.sender, msg.value, REGISTRATION_AUTHD_AMOUNT);
+        emit ClientRegistered(client, msg.value, REGISTRATION_AUTHD_AMOUNT);
     }
 
     /**
@@ -195,18 +187,20 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
      */
     function revokeClientRegistration(address client) external onlyOwner
     {
-        require(registeredClients[client], "Client not registered");
-        registeredClients[client] = false;
+        if (!isRegisteredClient[client])
+        {
+            revert ClientNotRegistered(client);
+        }
+        isRegisteredClient[client] = false;
+        delete authorizationData[client];
         emit ClientRegistrationRevoked(client);
     }
 
     /**
      * Withdraw ETH accumulated from client registrations.
      */
-    function withdrawTreasury(address payable to) external onlyOwner
+    function withdrawTreasury(address payable to) external onlyOwner validAddress(to)
     {
-        require(to != address(0), "Invalid withdraw address");
-
         uint256 amount = address(this).balance;
         require(amount > 0, "No ETH to withdraw");
         (bool ok, ) = to.call{value: amount}("");
@@ -219,7 +213,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
 
     /*
      * -----------------------------
-     * Existing authorization logic
+     * Authorization server-side logic
      * -----------------------------
      */
 
@@ -247,9 +241,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         _;
     }
 
-    /// authorize docstring - assuming msg.sender is the registered token contract
     function authorize(address owner, address authorized, uint256 cap) public
-       
         onlyRegisteredClient
         validAddress(owner)
         validAddress(authorized)
@@ -265,21 +257,26 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         if (IERC20(msg.sender).balanceOf(owner) < cap) {
             revert InsufficientOwnerBalance(msg.sender, owner, cap);
         }
-        authorizationData[msg.sender][owner].authorizationInfo[authorized].isAuthorized = true;
-        authorizationData[msg.sender][owner].authorizationInfo[authorized].cap = cap;
-        authorizationData[msg.sender][owner].authorizers.push() = authorized;
+        authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].isAuthorized = true;
+        authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].cap = cap;
+        authorizationData[msg.sender].authorizationOwner[owner].authorizers.push() = authorized;
+        authorizationData[msg.sender].delegatedBy[authorized].push() = owner;
         emit Authorization(msg.sender, owner, authorized, cap);
     }
 
-    /// This is the read function
     function getAuthorizedCap(address client, address owner, address authorized) view public returns (uint256)
     {
-        return authorizationData[client][owner].authorizationInfo[authorized].cap;
+        return authorizationData[client].authorizationOwner[owner].authorizationInfo[authorized].cap;
     }
 
     function getAuthorizersList(address client, address owner) public view returns (address[] memory)
     {
-        return authorizationData[client][owner].authorizers;
+        return authorizationData[client].authorizationOwner[owner].authorizers;
+    }
+
+    function getOwnersList(address client, address authorized) public view returns (address[] memory)
+    {
+        return authorizationData[client].delegatedBy[authorized];
     }
 
     function _getIncreasedCap(uint256 currentCap, uint256 addedCapRequested) internal pure
@@ -302,13 +299,13 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         validCapAmount(addedCap)
         returns (uint256 newCap)
     {
-        uint256 currentCap = authorizationData[msg.sender][owner].authorizationInfo[authorized].cap;
+        uint256 currentCap = authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].cap;
         newCap = _getIncreasedCap(currentCap, addedCap);
         if (IERC20(msg.sender).balanceOf(owner) < newCap)
         {
            revert InsufficientOwnerBalance(msg.sender, owner, newCap);
         }
-        authorizationData[msg.sender][owner].authorizationInfo[authorized].cap = newCap;
+        authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].cap = newCap;
         emit IncreaseAuthorizedCap(msg.sender, owner, authorized, newCap);
     }
 
@@ -337,9 +334,9 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
     function _decreaseAuthorizedCap(address owner, address authorized, uint256 subtractedCap) internal
         returns (uint256 newCap, uint256 approvedAmount)
     {
-        uint256 currentCap = authorizationData[msg.sender][owner].authorizationInfo[authorized].cap;
+        uint256 currentCap = authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].cap;
         (newCap, approvedAmount) = _getDecreasedCap(currentCap, subtractedCap);
-        authorizationData[msg.sender][owner].authorizationInfo[authorized].cap = newCap;
+        authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].cap = newCap;
         emit DecreaseAuthorizedCap(msg.sender, owner, authorized, newCap);
     }
 
@@ -354,14 +351,15 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
 
     function isAuthorized(address client, address owner, address authorized) public view returns (bool)
     {
-        return authorizationData[client][owner].authorizationInfo[authorized].isAuthorized;
+        return authorizationData[client].authorizationOwner[owner].authorizationInfo[authorized].isAuthorized;
     }
 
     function revokeAuthorization(address owner, address authorized) public onlyRegisteredClient
         currentlyAuthorized(msg.sender, owner, authorized)
     {
-        delete authorizationData[msg.sender][owner].authorizationInfo[authorized];
-        authorizationData[msg.sender][owner].authorizers.removeAddressFromArray(authorized);
+        delete authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized];
+        authorizationData[msg.sender].authorizationOwner[owner].authorizers.removeAddressFromArray(authorized);
+        authorizationData[msg.sender].delegatedBy[authorized].removeAddressFromArray(owner);
         emit RevokeAuthorization(msg.sender, owner, authorized);
     }
 
@@ -377,7 +375,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         {
             revert InvalidSpender(spender);
         }
-        uint256 currentCap = authorizationData[msg.sender][owner].authorizationInfo[authorized].cap;
+        uint256 currentCap = authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].cap;
         if (currentCap < amount)
         {
             revert InsufficientAuthorizedCap(
@@ -390,17 +388,4 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         emit ApproveFor(msg.sender, owner, authorized, spender, amount);
         return amount;
     }
-
-    /*
-    // TODO: Consider moving this functionality to Client
-    // Supports approving multiple spenders in a single transaction
-    function approveFor(address owner, address authorized, address[] calldata spenders, uint256[] calldata amounts) public
-    {
-        require((spenders.length == amounts.length) && (amounts.length > 0), "Spenders and amounts array length should be non-zero and same");
-        for (uint256 i = 0; i < spenders.length; ++i)
-        {
-            approveFor(owner, authorized, spenders[i], amounts[i]);
-        }
-    }
-    */
 }

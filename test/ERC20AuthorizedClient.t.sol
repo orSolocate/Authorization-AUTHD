@@ -2,25 +2,15 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-// import {Vm} from "forge-std/Vm.sol";
 import {DemoClient} from "./DemoClient.sol";
 import {ERC20Authorized} from "../contracts/ERC20Authorized.sol";
+import {IERC20Authorized} from "../contracts/interfaces/IERC20Authorized.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-interface IERC20AuthorizedEvents
-{
-    event Authorization(address indexed, address indexed, address, uint256);
-    event RevokeAuthorization(address indexed, address indexed, address);
-    event IncreaseAuthorizedCap(address indexed, address indexed, address, uint256);
-    event DecreaseAuthorizedCap(address indexed, address indexed, address, uint256);
-   event ApproveFor(address indexed, address indexed, address, address, uint256);
-}
-
-contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
+contract AuthorizedClientTest is Test
 {
     ERC20Authorized public authorizedServer;
     DemoClient public demoClient1;
-    // ERC20AuthorizedClient public demoClient2;
     address internal owner = makeAddr("Owner-address");
     address internal authorized1 = makeAddr("Authorized-address-1");
     address internal authorized2 = makeAddr("Authorized-address-2");
@@ -43,10 +33,10 @@ contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
         vm.expectEmit(true, true, false, true);
         emit IERC20.Approval( owner,  authorized1, 25);
         vm.expectEmit(true, true, false, true);
-        emit Authorization(address(demoClient1), owner, authorized1, 25);
+        emit IERC20Authorized.Authorization(address(demoClient1), owner, authorized1, 25);
         demoClient1.authorize(authorized1, 25);
         assertTrue(demoClient1.isAuthorized(authorized1));
-        assertEq(demoClient1.GetAuthorizedCap(authorized1), 25, "Cap should update after authorize");
+        assertEq(demoClient1.getAuthorizedCap(authorized1), 25, "Cap should update after authorize");
         // Verify authorized address calls ERC20's approval
         assertEq(demoClient1.allowance(owner, authorized1), 25, "Authorized should be approved on the authorized cap");
     }
@@ -60,9 +50,9 @@ contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
         vm.expectEmit(true, true, false, true);
         emit IERC20.Approval( owner,  authorized1, 45);
         vm.expectEmit(true, true, false, true);
-        emit IncreaseAuthorizedCap(address(demoClient1), owner, authorized1, 45);
+        emit IERC20Authorized.IncreaseAuthorizedCap(address(demoClient1), owner, authorized1, 45);
         demoClient1.increaseAuthorizedCap(authorized1, 20);
-        assertEq(demoClient1.GetAuthorizedCap(authorized1), 45, "Cap should update after increase");
+        assertEq(demoClient1.getAuthorizedCap(authorized1), 45, "Cap should update after increase");
         // Verify authorized address increase calls ERC20's approval
         assertEq(demoClient1.allowance(owner, authorized1), 45, "Authorized should be approved on the updated authorized cap");
     }
@@ -74,7 +64,7 @@ contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
         vm.startPrank(owner);
         demoClient1.authorize(authorized1, 100);
         demoClient1.increaseAuthorizedCap(authorized1, maxInt);
-        assertEq(demoClient1.GetAuthorizedCap(authorized1), maxInt, "Cap should update after increase");
+        assertEq(demoClient1.getAuthorizedCap(authorized1), maxInt, "Cap should update after increase");
         // Verify authorized address increase calls ERC20's approval
         assertEq(demoClient1.allowance(owner, authorized1), maxInt, "Authorized should be approved on the updated authorized cap");
     }
@@ -88,9 +78,9 @@ contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
         vm.expectEmit(true, true, false, true);
         emit IERC20.Approval( owner,  authorized1, 10);
         vm.expectEmit(true, true, false, true);
-        emit DecreaseAuthorizedCap(address(demoClient1), owner, authorized1, 10);
+        emit IERC20Authorized.DecreaseAuthorizedCap(address(demoClient1), owner, authorized1, 10);
         demoClient1.decreaseAuthorizedCap(authorized1, 15);
-        assertEq(demoClient1.GetAuthorizedCap(authorized1), 10, "Cap should update after decrease");
+        assertEq(demoClient1.getAuthorizedCap(authorized1), 10, "Cap should update after decrease");
         // Verify authorized address increase calls ERC20's approval
         assertEq(demoClient1.allowance(owner, authorized1), 10, "Authorized should be approved on the updated authorized cap");
     }
@@ -101,7 +91,7 @@ contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
         vm.startPrank(owner);
         demoClient1.authorize(authorized1, 50);
         demoClient1.decreaseAuthorizedCap(authorized1, 100);
-        assertEq(demoClient1.GetAuthorizedCap(authorized1), 0, "Cap should update after decrease");
+        assertEq(demoClient1.getAuthorizedCap(authorized1), 0, "Cap should update after decrease");
         // Verify authorized address increase calls ERC20's approval
         assertEq(demoClient1.allowance(owner, authorized1), 0, "Authorized should be approved on the updated authorized cap");
     }
@@ -117,7 +107,7 @@ contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
         demoClient1.revokeAuthorization(authorized1);
         vm.startPrank(owner);
         vm.expectEmit(true, true, false, true);
-        emit RevokeAuthorization(address(demoClient1), owner, authorized1);
+        emit IERC20Authorized.RevokeAuthorization(address(demoClient1), owner, authorized1);
         demoClient1.revokeAuthorization(authorized1);
         assertFalse(demoClient1.isAuthorized(authorized1), "Revoking should un-authorize");
         // Verify authorized address increase calls ERC20's approval
@@ -144,12 +134,12 @@ contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
         vm.expectEmit(true, true, false, true);
         emit IERC20.Approval( owner,  spender1, 15);
         vm.expectEmit(true, true, false, true);
-        emit DecreaseAuthorizedCap(address(demoClient1), owner, authorized1,10);
+        emit IERC20Authorized.DecreaseAuthorizedCap(address(demoClient1), owner, authorized1,10);
         vm.expectEmit(true, true, false, true);
-        emit ApproveFor(address(demoClient1), owner, authorized1, spender1, 15);
+        emit IERC20Authorized.ApproveFor(address(demoClient1), owner, authorized1, spender1, 15);
         demoClient1.approveFor(owner, spender1, 15);
         vm.prank(owner);
-        assertEq(demoClient1.GetAuthorizedCap(authorized1), 10, "Cap should update after approve");
+        assertEq(demoClient1.getAuthorizedCap(authorized1), 10, "Cap should update after approve");
         // Verify authorized address increase calls ERC20's approval
         assertEq(demoClient1.allowance(owner, authorized1), 10, "Authorized should be approved on the updated authorized cap");
         assertEq(demoClient1.allowance(owner, spender1), 15, "Spender allowance should be updated");
@@ -195,8 +185,8 @@ contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
         vm.prank(authorized2);
         demoClient1.approveFor(owner, spender1, 75);
         vm.startPrank(owner);
-        assertEq(demoClient1.GetAuthorizedCap(authorized1), 50, "Cap should update after approve");
-        assertEq(demoClient1.GetAuthorizedCap(authorized2), 25, "Cap should update after approve");
+        assertEq(demoClient1.getAuthorizedCap(authorized1), 50, "Cap should update after approve");
+        assertEq(demoClient1.getAuthorizedCap(authorized2), 25, "Cap should update after approve");
         assertEq(demoClient1.allowance(owner, authorized1), 50, "Authorized1 allowance should be updated");
         assertEq(demoClient1.allowance(owner, authorized2), 25, "Authorized2 allowance should be updated");
         assertEq(demoClient1.allowance(owner, spender1), 75, "Spender allowance should be updated according the most recent approval");
@@ -274,7 +264,7 @@ contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
         vm.prank(authorized1);
         demoClient1.approveForMultiple(owner, spenders, amounts);
         vm.prank(owner);
-        assertEq(demoClient1.GetAuthorizedCap(authorized1), amount / 4, "Cap should update after approve");
+        assertEq(demoClient1.getAuthorizedCap(authorized1), amount / 4, "Cap should update after approve");
         assertEq(demoClient1.allowance(owner, authorized1), amount / 4, "Authorized1 allowance should be updated");
         assertEq(demoClient1.allowance(owner, spender1), amount / 2, "Spender1 allowance should be updated");
         assertEq(demoClient1.allowance(owner, spender2), amount / 4, "Spender2 allowance should be updated");
@@ -296,7 +286,7 @@ contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
         vm.prank(authorized1);
         demoClient1.approveForMultiple(owner, spenders, amounts);
         vm.prank(owner);
-        assertEq(demoClient1.GetAuthorizedCap(authorized1), amount / 4, "Cap should update after approve");
+        assertEq(demoClient1.getAuthorizedCap(authorized1), amount / 4, "Cap should update after approve");
         assertEq(demoClient1.allowance(owner, authorized1), amount / 4, "Authorized1 allowance should be updated");
         assertEq(demoClient1.allowance(owner, spender1), amount / 4, "Spender allowance should be updated according the most recent approval");
     }
@@ -308,18 +298,18 @@ contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
         demoClient1.authorize(authorized1, 100);
         demoClient1.authorize(authorized2, 200);
         demoClient1.transfer(address(this), 50);
-        assertEq(demoClient1.GetAuthorizedCap(authorized1), 100, "Cap should not update if not needed after transfer");
+        assertEq(demoClient1.getAuthorizedCap(authorized1), 100, "Cap should not update if not needed after transfer");
         assertEq(demoClient1.allowance(owner, authorized1),100, "Authorized1 allowance should not be updated");
-        assertEq(demoClient1.GetAuthorizedCap(authorized2), 150, "Cap should update after transfer");
+        assertEq(demoClient1.getAuthorizedCap(authorized2), 150, "Cap should update after transfer");
         assertEq(demoClient1.allowance(owner, authorized2), 150, "Authorized2 allowance should be updated");
         vm.stopPrank();
         vm.prank(authorized1);
         demoClient1.approveFor(owner, spender1, 60);
         vm.startPrank(owner);
         demoClient1.transfer(address(this), 100);
-        assertEq(demoClient1.GetAuthorizedCap(authorized1), 40, "Cap should not be needed after transfer");
+        assertEq(demoClient1.getAuthorizedCap(authorized1), 40, "Cap should not be needed after transfer");
         assertEq(demoClient1.allowance(owner, authorized1),40, "Authorized1 allowance shouldn't be updated");
-        assertEq(demoClient1.GetAuthorizedCap(authorized2), 50, "Cap should update after transfer to owner's balance");
+        assertEq(demoClient1.getAuthorizedCap(authorized2), 50, "Cap should update after transfer to owner's balance");
         assertEq(demoClient1.allowance(owner, authorized2), 50, "Authorized2 allowance should be updated to owner's balance");
         assertEq(demoClient1.allowance(owner, spender1), 60, "spender allowance should not be updated during _update");
     }
@@ -330,7 +320,7 @@ contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
         vm.startPrank(owner);
         demoClient1.authorize(authorized1, 100);
         demoClient1.burn(150);
-        assertEq(demoClient1.GetAuthorizedCap(authorized1), 50, "Cap should update after burn");
+        assertEq(demoClient1.getAuthorizedCap(authorized1), 50, "Cap should update after burn");
         assertEq(demoClient1.allowance(owner, authorized1),50, "Authorized1 allowance should be updated");
     }
 
@@ -344,7 +334,7 @@ contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
         // Verify there is no issue with revoked authorizer
         demoClient1.transfer(address(this), 120);
         assertFalse(demoClient1.isAuthorized(authorized1));
-        assertEq(demoClient1.GetAuthorizedCap(authorized2), 80, "Cap should update after transfer");
+        assertEq(demoClient1.getAuthorizedCap(authorized2), 80, "Cap should update after transfer");
         assertEq(demoClient1.allowance(owner, authorized2), 80, "Authorized2 allowance should be updated");
     }
 
@@ -367,5 +357,52 @@ contract AuthorizedClientTest is Test, IERC20AuthorizedEvents
         demoClient2.decreaseAuthorizedCap(authorized1, 50);
         assertFalse(demoClient2.isRegisteredClient());
         assertTrue(demoClient1.isRegisteredClient());
+    }
+
+    function test_getAuthorizersList() external
+    {
+        deal(address(demoClient1), owner, 50);
+        vm.startPrank(owner);
+        demoClient1.authorize(authorized1, 10);
+        demoClient1.authorize(authorized2, 20);
+        address[] memory authorizers =  new address[](2);
+        authorizers[0] = authorized1;
+        authorizers[1] = authorized2;
+        assertEq(demoClient1.getAuthorizersList(), authorizers);
+        demoClient1.revokeAuthorization(authorized1);
+        delete authorizers;
+        authorizers =  new address[](1);
+        authorizers[0] = authorized2;
+        assertEq(demoClient1.getAuthorizersList(), authorizers);
+    }
+
+    function test_getOwnersList() external
+    {
+        address owner2 = makeAddr("Owner-address-2");
+        deal(address(demoClient1), owner, 50);
+        deal(address(demoClient1), owner2, 75);
+        vm.prank(owner);
+        demoClient1.authorize(authorized1, 10);
+        vm.prank(owner);
+        demoClient1.authorize(authorized2, 15);
+        vm.prank(owner2);
+        demoClient1.authorize(authorized1, 20);
+        address[] memory ownersAuthorized1 =  new address[](2);
+        ownersAuthorized1[0] = owner;
+        ownersAuthorized1[1] = owner2;
+        vm.prank(authorized1);
+        assertEq(demoClient1.getOwnersList(), ownersAuthorized1);
+        address[] memory ownersAuthorized2 =  new address[](1);
+        ownersAuthorized2[0] = owner;
+        vm.prank(authorized2);
+        assertEq(demoClient1.getOwnersList(), ownersAuthorized2);
+        // Verify owners list is updated after revoking authorization
+        vm.prank(owner);
+        demoClient1.revokeAuthorization(authorized1);
+        delete ownersAuthorized1;
+        ownersAuthorized1 =  new address[](1);
+        ownersAuthorized1[0] = owner2;
+        vm.prank(authorized1);
+        assertEq(demoClient1.getOwnersList(), ownersAuthorized1);
     }
 }
