@@ -512,16 +512,47 @@ contract ERC20AuthorizedTest is Test
             assertFalse(erc20Authorized.isRegisteredClient(address(unregisteredClient)));
         }
 
-    // function test_authorizeRevertsIfClientNotRegistered() external
-    //     {
-    //         ERC20Authorized unregisteredClient = new ERC20Authorized();
+    function test_revokeClientRegistrationRevertsForNonOwner() external
+    {
+        vm.prank(address(customToken1));
+        vm.expectRevert();
+        erc20Authorized.revokeClientRegistration(address(customToken2));
+    }
 
-    //         deal(address(unregisteredClient), owner, 50);
+    function test_revokeClientRegistrationRevertsIfClientNotRegistered() external
+    {
+        ERC20Authorized unregisteredClient = new ERC20Authorized();
 
-    //         vm.prank(address(unregisteredClient));
-    //         vm.expectRevert();
-    //         erc20Authorized.authorize(owner, authorized1, 20);
-    //     }
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC20AuthorizedErrors.ClientNotRegistered.selector,
+                address(unregisteredClient)
+            )
+        );
+        erc20Authorized.revokeClientRegistration(address(unregisteredClient));
+    }
+
+    function test_revokeClientRegistrationWorks() external
+    {
+        vm.expectEmit(true, false, false, true);
+        emit IERC20Authorized.ClientRegistrationRevoked(address(customToken1));
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        assertFalse(erc20Authorized.isRegisteredClient(address(customToken1)));
+    }
+
+    
+    function test_authorizeRevertsIfClientNotRegistered() external
+        {
+            ERC20Authorized unregisteredClient = new ERC20Authorized();
+
+            deal(address(unregisteredClient), owner, 50);
+
+            vm.prank(address(unregisteredClient));
+            vm.expectRevert();
+            erc20Authorized.authorize(owner, authorized1, 20);
+        }
 
     function test_increaseAuthorizedCapRevertsIfClientNotRegistered() external
         {
@@ -592,5 +623,113 @@ contract ERC20AuthorizedTest is Test
             vm.expectRevert(bytes("No ETH to withdraw"));
             erc20Authorized.withdrawTreasury(treasuryReceiver);
         }
+
+    // function test_revokeClientRegistrationClearsAuthorizationState() external 
+    // {
+    //     deal(address(customToken1), owner, 100);
+    //     deal(address(customToken2), owner, 200);
+
+    //     vm.prank(address(customToken1));
+    //     erc20Authorized.authorize(owner, authorized1, 60);
+
+    //     vm.prank(address(customToken2));
+    //     erc20Authorized.authorize(owner, authorized1, 150);
+
+    //     assertTrue(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+    //     assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 60);
+
+    //     assertTrue(erc20Authorized.isAuthorized(address(customToken2), owner, authorized1));
+    //     assertEq(erc20Authorized.getAuthorizedCap(address(customToken2), owner, authorized1), 150);
+
+    //     address[] memory client1AuthorizersBefore = new address[](1);
+    //     client1AuthorizersBefore[0] = authorized1;
+    //     assertEq(
+    //         erc20Authorized.getAuthorizersList(address(customToken1), owner),
+    //         client1AuthorizersBefore
+    //     );
+
+    //     address[] memory client1OwnersBefore = new address[](1);
+    //     client1OwnersBefore[0] = owner;
+    //     assertEq(
+    //         erc20Authorized.getOwnersList(address(customToken1), authorized1),
+    //         client1OwnersBefore
+    //     );
+
+    //     erc20Authorized.revokeClientRegistration(address(customToken1));
+
+    //     assertFalse(erc20Authorized.isRegisteredClient(address(customToken1)));
+    //     assertFalse(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+    //     assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 0);
+    //     assertEq(erc20Authorized.getAuthorizersList(address(customToken1), owner).length, 0);
+    //     assertEq(erc20Authorized.getOwnersList(address(customToken1), authorized1).length, 0);
+
+    //     assertTrue(erc20Authorized.isRegisteredClient(address(customToken2)));
+    //     assertTrue(erc20Authorized.isAuthorized(address(customToken2), owner, authorized1));
+    //     assertEq(erc20Authorized.getAuthorizedCap(address(customToken2), owner, authorized1), 150);
+
+    //     address[] memory client2AuthorizersAfter = new address[](1);
+    //     client2AuthorizersAfter[0] = authorized1;
+    //     assertEq(
+    //         erc20Authorized.getAuthorizersList(address(customToken2), owner),
+    //         client2AuthorizersAfter
+    //     );
+
+    //     address[] memory client2OwnersAfter = new address[](1);
+    //     client2OwnersAfter[0] = owner;
+    //     assertEq(
+    //         erc20Authorized.getOwnersList(address(customToken2), authorized1),
+    //         client2OwnersAfter
+    //     );
+    // }
+
+    // function test_revokeClientRegistrationAllowsReregistrationWithFreshState() external 
+    // {
+    //     deal(address(customToken1), owner, 100);
+    //     deal(address(customToken2), owner, 200);
+
+    //     vm.prank(address(customToken1));
+    //     erc20Authorized.authorize(owner, authorized1, 50);
+
+    //     vm.prank(address(customToken2));
+    //     erc20Authorized.authorize(owner, authorized1, 125);
+
+    //     erc20Authorized.revokeClientRegistration(address(customToken1));
+
+    //     uint256 fee = erc20Authorized.getRegistrationFee();
+    //     vm.deal(address(customToken1), fee);
+
+    //     vm.prank(address(customToken1));
+    //     erc20Authorized.registerClient{value: fee}();
+
+    //     assertTrue(erc20Authorized.isRegisteredClient(address(customToken1)));
+    //     assertFalse(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+    //     assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 0);
+    //     assertEq(erc20Authorized.getAuthorizersList(address(customToken1), owner).length, 0);
+    //     assertEq(erc20Authorized.getOwnersList(address(customToken1), authorized1).length, 0);
+
+    //     assertTrue(erc20Authorized.isRegisteredClient(address(customToken2)));
+    //     assertTrue(erc20Authorized.isAuthorized(address(customToken2), owner, authorized1));
+    //     assertEq(erc20Authorized.getAuthorizedCap(address(customToken2), owner, authorized1), 125);
+
+    //     vm.prank(address(customToken1));
+    //     erc20Authorized.authorize(owner, authorized1, 25);
+
+    //     assertTrue(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+    //     assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 25);
+
+    //     address[] memory client1AuthorizersAfter = new address[](1);
+    //     client1AuthorizersAfter[0] = authorized1;
+    //     assertEq(
+    //         erc20Authorized.getAuthorizersList(address(customToken1), owner),
+    //         client1AuthorizersAfter
+    //     );
+
+    //     address[] memory client1OwnersAfter = new address[](1);
+    //     client1OwnersAfter[0] = owner;
+    //     assertEq(
+    //         erc20Authorized.getOwnersList(address(customToken1), authorized1),
+    //         client1OwnersAfter
+    //     );
+    // }
 }
 

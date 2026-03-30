@@ -10,6 +10,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Authorized} from "./interfaces/IERC20Authorized.sol";
 import {ERC20AuthorizedErrors} from "./ERC20AuthorizedErrors.sol";
 import "./lib/AddressArrayUtils.sol";
+import {LinearRate} from "./lib/LinearRate.sol";
 
 /// The "server"
 contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErrors
@@ -74,14 +75,6 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         _;
     }
 
-    function _linearRate(uint256 x, uint256 xHigh, uint256 xLow, uint256 yHigh, uint256 yLow) internal pure returns (uint256) {
-        require(x <= xHigh && x >= xLow, "x out of range");
-        if (xHigh == xLow) return yLow;
-
-        // y = yHigh + (xHigh - x) * (yLow - yHigh) / (xHigh - xLow)
-        return yHigh + ((xHigh - x) * (yLow - yHigh)) / (xHigh - xLow);
-    }
-
     /**
      * Piecewise linear pricing preview.
      *
@@ -94,7 +87,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
      */
     function previewAuthdRate(uint256 remainingWholeTokens) internal pure returns (uint256) {
         if (remainingWholeTokens >= 200_000) {
-            return _linearRate(
+            return LinearRate.linearRate(
                 remainingWholeTokens,
                 250_000,
                 200_000,
@@ -104,7 +97,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         }
 
         if (remainingWholeTokens >= 50_000) {
-            return _linearRate(
+            return LinearRate.linearRate(
                 remainingWholeTokens,
                 200_000,
                 50_000,
@@ -113,7 +106,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
             );
         }
 
-        return _linearRate(
+        return LinearRate.linearRate(
             remainingWholeTokens,
             50_000,
             0,
