@@ -45,6 +45,8 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
     {
         mapping(address => AuthorizationOwner) authorizationOwner;
         mapping (address => address[]) delegatedBy;
+        address[] owners;
+        mapping(address => bool) isOwnerListed;
     }
 
     mapping(address => AuthorizationClient) internal authorizationData;
@@ -175,6 +177,27 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         emit ClientRegistered(client, msg.value, REGISTRATION_AUTHD_AMOUNT);
     }
 
+    function _clearClientAuthorizationState(address client) internal {
+        AuthorizationClient storage clientAuth = authorizationData[client];
+        address[] memory owners = clientAuth.owners;
+
+        for (uint256 i = 0; i < owners.length; i++) {
+            address owner = owners[i];
+            address[] memory authorizers = clientAuth.authorizationOwner[owner].authorizers;
+
+            for (uint256 j = 0; j < authorizers.length; j++) {
+                address authorizer = authorizers[j];
+                delete clientAuth.authorizationOwner[owner].authorizationInfo[authorizer];
+                clientAuth.delegatedBy[authorizer].removeAddressFromArray(owner);
+            }
+
+            delete clientAuth.authorizationOwner[owner].authorizers;
+            clientAuth.isOwnerListed[owner] = false;
+        }
+
+        delete clientAuth.owners;
+    }
+
     /**
      * Optional admin function in case you want to disable a client later.
      */
@@ -184,8 +207,8 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         {
             revert ClientNotRegistered(client);
         }
+        _clearClientAuthorizationState(client);
         isRegisteredClient[client] = false;
-        delete authorizationData[client];
         emit ClientRegistrationRevoked(client);
     }
 
@@ -250,10 +273,18 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         if (IERC20(msg.sender).balanceOf(owner) < cap) {
             revert InsufficientOwnerBalance(msg.sender, owner, cap);
         }
-        authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].isAuthorized = true;
-        authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].cap = cap;
-        authorizationData[msg.sender].authorizationOwner[owner].authorizers.push() = authorized;
-        authorizationData[msg.sender].delegatedBy[authorized].push() = owner;
+        AuthorizationClient storage clientAuth = authorizationData[msg.sender];
+        AuthorizationOwner storage ownerAuth = clientAuth.authorizationOwner[owner];
+
+        if (!clientAuth.isOwnerListed[owner]) {
+            clientAuth.owners.push(owner);
+            clientAuth.isOwnerListed[owner] = true;
+        }
+
+        ownerAuth.authorizationInfo[authorized].isAuthorized = true;
+        ownerAuth.authorizationInfo[authorized].cap = cap;
+        ownerAuth.authorizers.push() = authorized;
+        clientAuth.delegatedBy[authorized].push() = owner;
         emit Authorization(msg.sender, owner, authorized, cap);
     }
 
@@ -350,9 +381,17 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
     function revokeAuthorization(address owner, address authorized) public onlyRegisteredClient
         currentlyAuthorized(msg.sender, owner, authorized)
     {
-        delete authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized];
-        authorizationData[msg.sender].authorizationOwner[owner].authorizers.removeAddressFromArray(authorized);
-        authorizationData[msg.sender].delegatedBy[authorized].removeAddressFromArray(owner);
+        AuthorizationClient storage clientAuth = authorizationData[msg.sender];
+
+        delete clientAuth.authorizationOwner[owner].authorizationInfo[authorized];
+        clientAuth.authorizationOwner[owner].authorizers.removeAddressFromArray(authorized);
+        clientAuth.delegatedBy[authorized].removeAddressFromArray(owner);
+
+        if (clientAuth.authorizationOwner[owner].authorizers.length == 0) {
+            clientAuth.owners.removeAddressFromArray(owner);
+            clientAuth.isOwnerListed[owner] = false;
+        }
+
         emit RevokeAuthorization(msg.sender, owner, authorized);
     }
 
