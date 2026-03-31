@@ -26,7 +26,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
     // Simple capstone-friendly registration economics
     uint256 internal constant REGISTRATION_FEE = 0.01 ether;
 
-    uint256 public constant REGISTRATION_AUTHD_AMOUNT = 20;
+    uint256 public constant BASE_REGISTRATION_AUTHD_AMOUNT = 20;
 
     // Remaining AUTHD reserved for clients
     uint256 internal clientPoolRemaining;
@@ -121,21 +121,30 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
      * Current ETH price per 1 AUTHD token (1 whole token, not 1 wei of AUTHD).
      */
     function getAuthdRate() internal view returns (uint256) {
-        uint256 remainingWholeTokens = clientPoolRemaining / 1e18;
+        uint256 remainingWholeTokens = clientPoolRemaining;
         return previewAuthdRate(remainingWholeTokens);
     }
 
     /**
-     * ETH fee to register a client for REGISTRATION_AUTHD_AMOUNT (20 AUTHD).
+     * ETH fee to register a client based on the current linear AUTHD rate.
      */
     function getRegistrationFee() public view returns (uint256) {
-        uint256 dynamicFee = (REGISTRATION_AUTHD_AMOUNT * getAuthdRate()) / 1e18;
+        uint256 dynamicFee = BASE_REGISTRATION_AUTHD_AMOUNT * getAuthdRate();
 
         if (dynamicFee < REGISTRATION_FEE) {
             return REGISTRATION_FEE;
         }
 
         return dynamicFee;
+    }
+
+    function getRegistrationAuthdAmount() public view returns (uint256) {
+        uint256 rate = getAuthdRate();
+        if (rate == 0) {
+            revert InvalidAmount(rate);
+        }
+
+        return getRegistrationFee() / rate;
     }
 
     /**
@@ -157,24 +166,25 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
             revert AlreadyRegistered(client);
         }
         uint256 fee = getRegistrationFee();
+        uint256 registrationAuthdAmount = getRegistrationAuthdAmount();
         if (msg.value < fee)
         {
             revert InsufficientRegistrationFee(msg.value, fee);
         }
-        if (clientPoolRemaining < REGISTRATION_AUTHD_AMOUNT)
+        if (clientPoolRemaining < registrationAuthdAmount)
         {
-            revert ClientPoolExhuasted(clientPoolRemaining, REGISTRATION_AUTHD_AMOUNT);
+            revert ClientPoolExhuasted(clientPoolRemaining, registrationAuthdAmount);
         }
-        if (balanceOf(address(this)) < REGISTRATION_AUTHD_AMOUNT)
+        if (balanceOf(address(this)) < registrationAuthdAmount)
         {
-            revert InsufficientAuthdSupply(balanceOf(address(this)), REGISTRATION_AUTHD_AMOUNT);
+            revert InsufficientAuthdSupply(balanceOf(address(this)), registrationAuthdAmount);
         }
         isRegisteredClient[client] = true;
-        clientPoolRemaining -= REGISTRATION_AUTHD_AMOUNT;
+        clientPoolRemaining -= registrationAuthdAmount;
 
-        _transfer(address(this), client, REGISTRATION_AUTHD_AMOUNT);
+        _transfer(address(this), client, registrationAuthdAmount);
 
-        emit ClientRegistered(client, msg.value, REGISTRATION_AUTHD_AMOUNT);
+        emit ClientRegistered(client, msg.value, registrationAuthdAmount);
     }
 
     function _clearClientAuthorizationState(address client) internal {

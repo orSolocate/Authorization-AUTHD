@@ -467,7 +467,7 @@ contract ERC20AuthorizedTest is Test
         {
             ERC20Authorized newClient = new ERC20Authorized();
             uint256 fee = erc20Authorized.getRegistrationFee();
-            uint256 authdAmount = erc20Authorized.REGISTRATION_AUTHD_AMOUNT();
+            uint256 authdAmount = erc20Authorized.getRegistrationAuthdAmount();
             vm.deal(address(newClient), fee);
             vm.startPrank(address(newClient));
             vm.expectEmit(true, false, false, true);
@@ -770,6 +770,23 @@ contract ERC20AuthorizedTest is Test
         assertEq(owners.length, 1);
         assertEq(owners[0], owner);
         assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 25);
+    }
+
+    function test_registerClientUsesLinearRateAmount() external {
+        ERC20Authorized newClient = new ERC20Authorized();
+
+        uint256 fee = erc20Authorized.getRegistrationFee();
+        uint256 authdAmount = erc20Authorized.getRegistrationAuthdAmount();
+
+        vm.deal(address(newClient), fee);
+        vm.startPrank(address(newClient));
+
+        erc20Authorized.registerClient{value: fee}();
+
+        assertEq(
+            erc20Authorized.balanceOf(address(newClient)),
+            authdAmount
+        );
     }
 
 }
