@@ -1,5 +1,5 @@
 {
-  "name": "ERC20Authorized",
+  "name": "Authorization-AUTHD",
   "version": "1.0.0",
   "type": "module",
   "devDependencies": {
