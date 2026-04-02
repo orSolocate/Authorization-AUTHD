@@ -45,7 +45,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
     {
         mapping(address => AuthorizationOwner) authorizationOwner;
         mapping (address => address[]) delegatedBy;
-        address[] owners;
+        address[] allOwners;
         mapping(address => bool) isOwnerListed;
     }
 
