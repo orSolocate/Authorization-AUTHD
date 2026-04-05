@@ -467,7 +467,7 @@ contract ERC20AuthorizedTest is Test
         {
             ERC20Authorized newClient = new ERC20Authorized();
             uint256 fee = erc20Authorized.getRegistrationFee();
-            uint256 authdAmount = erc20Authorized.REGISTRATION_AUTHD_AMOUNT();
+            uint256 authdAmount = erc20Authorized.getRegistrationAuthdAmount();
             vm.deal(address(newClient), fee);
             vm.startPrank(address(newClient));
             vm.expectEmit(true, false, false, true);
@@ -512,16 +512,47 @@ contract ERC20AuthorizedTest is Test
             assertFalse(erc20Authorized.isRegisteredClient(address(unregisteredClient)));
         }
 
-    // function test_authorizeRevertsIfClientNotRegistered() external
-    //     {
-    //         ERC20Authorized unregisteredClient = new ERC20Authorized();
+    function test_revokeClientRegistrationRevertsForNonOwner() external
+    {
+        vm.prank(address(customToken1));
+        vm.expectRevert();
+        erc20Authorized.revokeClientRegistration(address(customToken2));
+    }
 
-    //         deal(address(unregisteredClient), owner, 50);
+    function test_revokeClientRegistrationRevertsIfClientNotRegistered() external
+    {
+        ERC20Authorized unregisteredClient = new ERC20Authorized();
 
-    //         vm.prank(address(unregisteredClient));
-    //         vm.expectRevert();
-    //         erc20Authorized.authorize(owner, authorized1, 20);
-    //     }
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC20AuthorizedErrors.ClientNotRegistered.selector,
+                address(unregisteredClient)
+            )
+        );
+        erc20Authorized.revokeClientRegistration(address(unregisteredClient));
+    }
+
+    function test_revokeClientRegistrationWorks() external
+    {
+        vm.expectEmit(true, false, false, true);
+        emit IERC20Authorized.ClientRegistrationRevoked(address(customToken1));
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        assertFalse(erc20Authorized.isRegisteredClient(address(customToken1)));
+    }
+
+    
+    function test_authorizeRevertsIfClientNotRegistered() external
+        {
+            ERC20Authorized unregisteredClient = new ERC20Authorized();
+
+            deal(address(unregisteredClient), owner, 50);
+
+            vm.prank(address(unregisteredClient));
+            vm.expectRevert();
+            erc20Authorized.authorize(owner, authorized1, 20);
+        }
 
     function test_increaseAuthorizedCapRevertsIfClientNotRegistered() external
         {
@@ -592,5 +623,170 @@ contract ERC20AuthorizedTest is Test
             vm.expectRevert(bytes("No ETH to withdraw"));
             erc20Authorized.withdrawTreasury(treasuryReceiver);
         }
-}
 
+
+
+    function test_revokeClientRegistrationPreventsRevokeAuthorizationWhileRevoked() external
+    {
+        deal(address(customToken1), owner, 100);
+
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        vm.prank(address(customToken1));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC20AuthorizedErrors.ClientNotRegistered.selector,
+                address(customToken1)
+            )
+        );
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+    }
+
+    function test_revokeClientRegistrationPreventsIncreaseAuthorizedCapWhileRevoked() external
+    {
+        deal(address(customToken1), owner, 100);
+
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        vm.prank(address(customToken1));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC20AuthorizedErrors.ClientNotRegistered.selector,
+                address(customToken1)
+            )
+        );
+        erc20Authorized.increaseAuthorizedCap(owner, authorized1, 10);
+    }
+
+    function test_revokeClientRegistrationPreventsDecreaseAuthorizedCapWhileRevoked() external
+    {
+        deal(address(customToken1), owner, 100);
+
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        vm.prank(address(customToken1));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC20AuthorizedErrors.ClientNotRegistered.selector,
+                address(customToken1)
+            )
+        );
+        erc20Authorized.decreaseAuthorizedCap(owner, authorized1, 10);
+    }
+
+    function test_revokeClientRegistrationPreventsApproveForWhileRevoked() external
+    {
+        deal(address(customToken1), owner, 100);
+
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        vm.prank(address(customToken1));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC20AuthorizedErrors.ClientNotRegistered.selector,
+                address(customToken1)
+            )
+        );
+        erc20Authorized.approveFor(owner, authorized1, authorized2, 10);
+    }
+
+    
+
+    function test_revokeClientRegistrationClearsAuthorizationState() external
+    {
+        address owner2 = makeAddr("Owner-address-2");
+        address authorized3 = makeAddr("Authorized-address-3");
+
+        deal(address(customToken1), owner, 200);
+        deal(address(customToken1), owner2, 200);
+
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+        erc20Authorized.authorize(owner, authorized2, 60);
+        erc20Authorized.authorize(owner2, authorized1, 70);
+        erc20Authorized.authorize(owner2, authorized3, 80);
+        vm.stopPrank();
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        assertFalse(erc20Authorized.isRegisteredClient(address(customToken1)));
+
+        assertFalse(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+        assertFalse(erc20Authorized.isAuthorized(address(customToken1), owner, authorized2));
+        assertFalse(erc20Authorized.isAuthorized(address(customToken1), owner2, authorized1));
+        assertFalse(erc20Authorized.isAuthorized(address(customToken1), owner2, authorized3));
+
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 0);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized2), 0);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner2, authorized1), 0);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner2, authorized3), 0);
+
+        assertEq(erc20Authorized.getAuthorizersList(address(customToken1), owner).length, 0);
+        assertEq(erc20Authorized.getAuthorizersList(address(customToken1), owner2).length, 0);
+        assertEq(erc20Authorized.getOwnersList(address(customToken1), authorized1).length, 0);
+        assertEq(erc20Authorized.getOwnersList(address(customToken1), authorized2).length, 0);
+        assertEq(erc20Authorized.getOwnersList(address(customToken1), authorized3).length, 0);
+    }
+
+    function test_clientCanReregisterWithCleanStateAfterRevocation() external
+    {
+        deal(address(customToken1), owner, 100);
+
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 40);
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        uint256 fee = erc20Authorized.getRegistrationFee();
+        vm.deal(address(customToken1), fee);
+        vm.prank(address(customToken1));
+        erc20Authorized.registerClient{value: fee}();
+
+        assertTrue(erc20Authorized.isRegisteredClient(address(customToken1)));
+        assertFalse(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+        assertEq(erc20Authorized.getAuthorizersList(address(customToken1), owner).length, 0);
+        assertEq(erc20Authorized.getOwnersList(address(customToken1), authorized1).length, 0);
+
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 25);
+
+        address[] memory authorizers = erc20Authorized.getAuthorizersList(address(customToken1), owner);
+        address[] memory owners = erc20Authorized.getOwnersList(address(customToken1), authorized1);
+
+        assertEq(authorizers.length, 1);
+        assertEq(authorizers[0], authorized1);
+        assertEq(owners.length, 1);
+        assertEq(owners[0], owner);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 25);
+    }
+
+    function test_registerClientUsesLinearRateAmount() external {
+        ERC20Authorized newClient = new ERC20Authorized();
+
+        uint256 fee = erc20Authorized.getRegistrationFee();
+        uint256 authdAmount = erc20Authorized.getRegistrationAuthdAmount();
+
+        vm.deal(address(newClient), fee);
+        vm.startPrank(address(newClient));
+
+        erc20Authorized.registerClient{value: fee}();
+
+        assertEq(
+            erc20Authorized.balanceOf(address(newClient)),
+            authdAmount
+        );
+    }
+
+}
