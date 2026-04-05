@@ -10,6 +10,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Authorized} from "./interfaces/IERC20Authorized.sol";
 import {ERC20AuthorizedErrors} from "./ERC20AuthorizedErrors.sol";
 import "./lib/AddressArrayUtils.sol";
+import {LinearRate} from "./lib/LinearRate.sol";
 
 /// The "server"
 contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErrors
@@ -25,7 +26,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
     // Simple capstone-friendly registration economics
     uint256 internal constant REGISTRATION_FEE = 0.01 ether;
 
-    uint256 public constant REGISTRATION_AUTHD_AMOUNT = 20;
+    uint256 public constant BASE_REGISTRATION_AUTHD_AMOUNT = 20;
 
     // Remaining AUTHD reserved for clients
     uint256 internal clientPoolRemaining;
@@ -44,6 +45,8 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
     {
         mapping(address => AuthorizationOwner) authorizationOwner;
         mapping (address => address[]) delegatedBy;
+        address[] allOwners;
+        mapping(address => bool) isOwnerListed;
     }
 
     mapping(address => AuthorizationClient) internal authorizationData;
@@ -74,14 +77,6 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         _;
     }
 
-    function _linearRate(uint256 x, uint256 xHigh, uint256 xLow, uint256 yHigh, uint256 yLow) internal pure returns (uint256) {
-        require(x <= xHigh && x >= xLow, "x out of range");
-        if (xHigh == xLow) return yLow;
-
-        // y = yHigh + (xHigh - x) * (yLow - yHigh) / (xHigh - xLow)
-        return yHigh + ((xHigh - x) * (yLow - yHigh)) / (xHigh - xLow);
-    }
-
     /**
      * Piecewise linear pricing preview.
      *
@@ -94,7 +89,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
      */
     function previewAuthdRate(uint256 remainingWholeTokens) internal pure returns (uint256) {
         if (remainingWholeTokens >= 200_000) {
-            return _linearRate(
+            return LinearRate.linearRate(
                 remainingWholeTokens,
                 250_000,
                 200_000,
@@ -104,7 +99,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         }
 
         if (remainingWholeTokens >= 50_000) {
-            return _linearRate(
+            return LinearRate.linearRate(
                 remainingWholeTokens,
                 200_000,
                 50_000,
@@ -113,7 +108,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
             );
         }
 
-        return _linearRate(
+        return LinearRate.linearRate(
             remainingWholeTokens,
             50_000,
             0,
@@ -126,21 +121,30 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
      * Current ETH price per 1 AUTHD token (1 whole token, not 1 wei of AUTHD).
      */
     function getAuthdRate() internal view returns (uint256) {
-        uint256 remainingWholeTokens = clientPoolRemaining / 1e18;
+        uint256 remainingWholeTokens = clientPoolRemaining;
         return previewAuthdRate(remainingWholeTokens);
     }
 
     /**
-     * ETH fee to register a client for REGISTRATION_AUTHD_AMOUNT (20 AUTHD).
+     * ETH fee to register a client based on the current linear AUTHD rate.
      */
     function getRegistrationFee() public view returns (uint256) {
-        uint256 dynamicFee = (REGISTRATION_AUTHD_AMOUNT * getAuthdRate()) / 1e18;
+        uint256 dynamicFee = BASE_REGISTRATION_AUTHD_AMOUNT * getAuthdRate();
 
         if (dynamicFee < REGISTRATION_FEE) {
             return REGISTRATION_FEE;
         }
 
         return dynamicFee;
+    }
+
+    function getRegistrationAuthdAmount() public view returns (uint256) {
+        uint256 rate = getAuthdRate();
+        if (rate == 0) {
+            revert InvalidAmount(rate);
+        }
+
+        return getRegistrationFee() / rate;
     }
 
     /**
@@ -162,24 +166,46 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
             revert AlreadyRegistered(client);
         }
         uint256 fee = getRegistrationFee();
+        uint256 registrationAuthdAmount = getRegistrationAuthdAmount();
         if (msg.value < fee)
         {
             revert InsufficientRegistrationFee(msg.value, fee);
         }
-        if (clientPoolRemaining < REGISTRATION_AUTHD_AMOUNT)
+        if (clientPoolRemaining < registrationAuthdAmount)
         {
-            revert ClientPoolExhuasted(clientPoolRemaining, REGISTRATION_AUTHD_AMOUNT);
+            revert ClientPoolExhuasted(clientPoolRemaining, registrationAuthdAmount);
         }
-        if (balanceOf(address(this)) < REGISTRATION_AUTHD_AMOUNT)
+        if (balanceOf(address(this)) < registrationAuthdAmount)
         {
-            revert InsufficientAuthdSupply(balanceOf(address(this)), REGISTRATION_AUTHD_AMOUNT);
+            revert InsufficientAuthdSupply(balanceOf(address(this)), registrationAuthdAmount);
         }
         isRegisteredClient[client] = true;
-        clientPoolRemaining -= REGISTRATION_AUTHD_AMOUNT;
+        clientPoolRemaining -= registrationAuthdAmount;
 
-        _transfer(address(this), client, REGISTRATION_AUTHD_AMOUNT);
+        _transfer(address(this), client, registrationAuthdAmount);
 
-        emit ClientRegistered(client, msg.value, REGISTRATION_AUTHD_AMOUNT);
+        emit ClientRegistered(client, msg.value, registrationAuthdAmount);
+    }
+
+    function _clearClientAuthorizationState(address client) internal {
+        AuthorizationClient storage clientAuth = authorizationData[client];
+        address[] memory owners = clientAuth.allOwners;
+
+        for (uint256 i = 0; i < owners.length; i++) {
+            address owner = owners[i];
+            address[] memory authorizers = clientAuth.authorizationOwner[owner].authorizers;
+
+            for (uint256 j = 0; j < authorizers.length; j++) {
+                address authorizer = authorizers[j];
+                delete clientAuth.authorizationOwner[owner].authorizationInfo[authorizer];
+                clientAuth.delegatedBy[authorizer].removeAddressFromArray(owner);
+            }
+
+            delete clientAuth.authorizationOwner[owner].authorizers;
+            clientAuth.isOwnerListed[owner] = false;
+        }
+
+        delete clientAuth.allOwners;
     }
 
     /**
@@ -191,8 +217,8 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         {
             revert ClientNotRegistered(client);
         }
+        _clearClientAuthorizationState(client);
         isRegisteredClient[client] = false;
-        delete authorizationData[client];
         emit ClientRegistrationRevoked(client);
     }
 
@@ -257,10 +283,18 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         if (IERC20(msg.sender).balanceOf(owner) < cap) {
             revert InsufficientOwnerBalance(msg.sender, owner, cap);
         }
-        authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].isAuthorized = true;
-        authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].cap = cap;
-        authorizationData[msg.sender].authorizationOwner[owner].authorizers.push() = authorized;
-        authorizationData[msg.sender].delegatedBy[authorized].push() = owner;
+        AuthorizationClient storage clientAuth = authorizationData[msg.sender];
+        AuthorizationOwner storage ownerAuth = clientAuth.authorizationOwner[owner];
+
+        if (!clientAuth.isOwnerListed[owner]) {
+            clientAuth.allOwners.push(owner);
+            clientAuth.isOwnerListed[owner] = true;
+        }
+
+        ownerAuth.authorizationInfo[authorized].isAuthorized = true;
+        ownerAuth.authorizationInfo[authorized].cap = cap;
+        ownerAuth.authorizers.push() = authorized;
+        clientAuth.delegatedBy[authorized].push() = owner;
         emit Authorization(msg.sender, owner, authorized, cap);
     }
 
@@ -357,9 +391,17 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
     function revokeAuthorization(address owner, address authorized) public onlyRegisteredClient
         currentlyAuthorized(msg.sender, owner, authorized)
     {
-        delete authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized];
-        authorizationData[msg.sender].authorizationOwner[owner].authorizers.removeAddressFromArray(authorized);
-        authorizationData[msg.sender].delegatedBy[authorized].removeAddressFromArray(owner);
+        AuthorizationClient storage clientAuth = authorizationData[msg.sender];
+
+        delete clientAuth.authorizationOwner[owner].authorizationInfo[authorized];
+        clientAuth.authorizationOwner[owner].authorizers.removeAddressFromArray(authorized);
+        clientAuth.delegatedBy[authorized].removeAddressFromArray(owner);
+
+        if (clientAuth.authorizationOwner[owner].authorizers.length == 0) {
+            clientAuth.allOwners.removeAddressFromArray(owner);
+            clientAuth.isOwnerListed[owner] = false;
+        }
+
         emit RevokeAuthorization(msg.sender, owner, authorized);
     }
 
