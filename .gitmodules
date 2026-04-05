@@ -1,3 +1,0 @@
-[submodule "lib/ampleforth-contracts"]
-	path = lib/ampleforth-contracts
-	url = https://github.com/ampleforth/ampleforth-contracts

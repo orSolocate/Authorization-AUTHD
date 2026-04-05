@@ -189,7 +189,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
 
     function _clearClientAuthorizationState(address client) internal {
         AuthorizationClient storage clientAuth = authorizationData[client];
-        address[] memory owners = clientAuth.owners;
+        address[] memory owners = clientAuth.allOwners;
 
         for (uint256 i = 0; i < owners.length; i++) {
             address owner = owners[i];
@@ -205,7 +205,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
             clientAuth.isOwnerListed[owner] = false;
         }
 
-        delete clientAuth.owners;
+        delete clientAuth.allOwners;
     }
 
     /**
@@ -287,7 +287,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         AuthorizationOwner storage ownerAuth = clientAuth.authorizationOwner[owner];
 
         if (!clientAuth.isOwnerListed[owner]) {
-            clientAuth.owners.push(owner);
+            clientAuth.allOwners.push(owner);
             clientAuth.isOwnerListed[owner] = true;
         }
 
@@ -398,7 +398,7 @@ contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErr
         clientAuth.delegatedBy[authorized].removeAddressFromArray(owner);
 
         if (clientAuth.authorizationOwner[owner].authorizers.length == 0) {
-            clientAuth.owners.removeAddressFromArray(owner);
+            clientAuth.allOwners.removeAddressFromArray(owner);
             clientAuth.isOwnerListed[owner] = false;
         }
 
