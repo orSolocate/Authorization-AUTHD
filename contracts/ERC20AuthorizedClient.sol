@@ -5,7 +5,6 @@ import {IERC20Authorized} from "./interfaces/IERC20Authorized.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 abstract contract ERC20AuthorizedClient is ERC20
 {
-    // Would be changed once ERC20Authorizer official contract is deployed in Sepolia
     address immutable private authorizationServerAddr;
 
     constructor (address _authorizationServerAddr)
