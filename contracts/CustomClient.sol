@@ -7,9 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 /// This contract should only be uploaded to testnet (e.g. Sepolia)
 contract CustomClient is ERC20("CustomClient", "CUST"), ERC20AuthorizedClient
 {
-    // TODO: change the value once ERC20Authorizer official contract is deployed in Sepolia
-    address private constant _authorizationServerAddr = address(0);
-    constructor() ERC20AuthorizedClient(_authorizationServerAddr) {}
+    constructor(address _authorizationServerAddr) ERC20AuthorizedClient(_authorizationServerAddr) {}
 
     function _update(address from, address to, uint256 value) internal virtual override(ERC20, ERC20AuthorizedClient)
     {
