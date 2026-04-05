@@ -1,433 +1,792 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-/// For Debug:
-//import "hardhat/console.sol";
-
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {ERC20Authorized} from "../contracts/ERC20Authorized.sol";
 import {IERC20Authorized} from "../contracts/interfaces/IERC20Authorized.sol";
 import {ERC20AuthorizedErrors} from "../contracts/ERC20AuthorizedErrors.sol";
-import "../contracts/lib/AddressArrayUtils.sol";
-import {LinearRate} from "../contracts/lib/LinearRate.sol";
 
-/// The "server"
-contract ERC20Authorized is ERC20, Ownable, IERC20Authorized, ERC20AuthorizedErrors
+contract ERC20AuthorizedTest is Test
 {
-    using AddressArrayUtils for address[];
-    // For registration verification
-    mapping(address => bool) public isRegisteredClient;
+    ERC20Authorized public erc20Authorized;
+    ERC20Authorized public customToken1;
+    ERC20Authorized public customToken2;
+    address internal owner = makeAddr("Owner-address");
+    address internal authorized1 = makeAddr("Authorized-address-1");
+    address internal authorized2 = makeAddr("Authorized-address-2");
 
-    uint256 internal constant INITIAL_AUTHD_SUPPLY = 1_000_000;
-    // 25% of total supply reserved for client registrations
-    uint256 internal constant CLIENT_AUTHD_POOL = 250_000;
-
-    // Simple capstone-friendly registration economics
-    uint256 internal constant REGISTRATION_FEE = 0.01 ether;
-
-    uint256 public constant BASE_REGISTRATION_AUTHD_AMOUNT = 20;
-
-    // Remaining AUTHD reserved for clients
-    uint256 internal clientPoolRemaining;
-
-    struct AuthorizationDataEntry
+   function setUp() public
     {
-        uint256 cap;
-        bool isAuthorized;
-    }
-    struct AuthorizationOwner
-    {
-        mapping(address => AuthorizationDataEntry) authorizationInfo;
-        address[] authorizers;
-    }
-    struct AuthorizationClient
-    {
-        mapping(address => AuthorizationOwner) authorizationOwner;
-        mapping (address => address[]) delegatedBy;
-        address[] allOwners;
-        mapping(address => bool) isOwnerListed;
+        erc20Authorized = new ERC20Authorized();
+        customToken1 = new ERC20Authorized();
+        customToken2 = new ERC20Authorized();
+        uint256 fee1 = erc20Authorized.getRegistrationFee();
+        uint256 fee2 = erc20Authorized.getRegistrationFee();
+        // Register both dummy client contracts so authorize/increase/decrease/etc can be called
+        vm.deal(address(customToken1), fee1);
+        vm.prank(address(customToken1));
+        erc20Authorized.registerClient{value: fee1}();
+        vm.deal(address(customToken2), fee2);
+        vm.prank(address(customToken2));
+        erc20Authorized.registerClient{value: fee2}();
     }
 
-    mapping(address => AuthorizationClient) internal authorizationData;
-
-    constructor() ERC20("AuthorizedToken", "AUTHD") Ownable(msg.sender)
+    function test_authorizeInvalidAddress() external
     {
-        clientPoolRemaining = CLIENT_AUTHD_POOL;
-
-        // 25% for client registrations sits in the contract
-        _mint(address(this), CLIENT_AUTHD_POOL);
-
-        // Remaining 75% goes to deployer/owner
-        _mint(msg.sender, INITIAL_AUTHD_SUPPLY - CLIENT_AUTHD_POOL);
+        deal(address(customToken1), owner, 50);
+        vm.prank(address(customToken1));
+        // Trying to authorize zero address
+        vm.expectRevert();
+        erc20Authorized.authorize(owner, address(0), 50);
+        // Trying to authorize from the zero address
+        vm.expectRevert();
+        erc20Authorized.authorize(address(0), authorized1, 50);
     }
 
-    /*
-     * -----------------------------
-     * For E: Registration / Treasury
-     * -----------------------------
-     */
-
-    modifier onlyRegisteredClient()
+    function test_selfAuthorize() external
     {
-        if (!isRegisteredClient[msg.sender])
+        deal(address(customToken1), owner, 50);
+        assertEq(customToken1.balanceOf(owner), 50);
+        vm.prank(address(customToken1));
+        // Trying to self authorize
+        vm.expectRevert();
+        erc20Authorized.authorize(owner, owner, 50);
+    }
+
+    function test_authorizeMoreThanBalance() external
+    {
+        deal(address(customToken1), owner, 50);
+        vm.prank(address(customToken1));
+        // Not enough tokens to authorize
+        vm.expectRevert();
+        erc20Authorized.authorize(owner, authorized1, 100);
+    }
+
+    function test_authorizeEmptyCap() external
+    {
+        deal(address(customToken1), owner, 50);
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 0);
+        assertTrue(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 0, "Cap should updated after authorize");
+    }
+
+    function test_authorizeTwice() external
+    {
+        deal(address(customToken1), owner, 50);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 20);
+        // Verify cannot authorize twice
+        vm.expectRevert();
+        erc20Authorized.authorize(owner, authorized1, 10);
+    }
+
+    function test_authorize() external
+    {
+        deal(address(customToken1), owner, 50);
+        vm.prank(address(customToken1));
+        vm.expectEmit(true, true, false, true);
+        emit IERC20Authorized.Authorization(address(customToken1), owner, authorized1, 50);
+        erc20Authorized.authorize(owner, authorized1, 50);
+        // Verify cap updates
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 50, "Cap should updated after authorizing");
+    }
+
+    function test_authorizeDouble() external
+    {
+        deal(address(customToken1), owner, 100);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 60);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 60, "Cap should updated after authorizing");
+
+        // Verify the authorization cap depends on owner's balance, and not on other authorization caps
+        erc20Authorized.authorize(owner, authorized2, 100);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized2), 100, "Cap should updated after authorizing");
+    }
+
+    function test_getAuthorizersList() external
+    {
+        deal(address(customToken1), owner, 50);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 10);
+        erc20Authorized.authorize(owner, authorized2, 20);
+        address[] memory authorizers =  new address[](2);
+        authorizers[0] = authorized1;
+        authorizers[1] = authorized2;
+        assertEq(erc20Authorized.getAuthorizersList(address(customToken1), owner), authorizers);
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+        delete authorizers;
+        authorizers =  new address[](1);
+        authorizers[0] = authorized2;
+        assertEq(erc20Authorized.getAuthorizersList(address(customToken1), owner), authorizers);
+    }
+
+    function test_getOwnersList() external
+    {
+        address owner2 = makeAddr("Owner-address-2");
+        deal(address(customToken1), owner, 50);
+        deal(address(customToken1), owner2, 75);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 10);
+        erc20Authorized.authorize(owner2, authorized1, 20);
+        erc20Authorized.authorize(owner, authorized2, 15);
+        address[] memory ownersAuthorized1 =  new address[](2);
+        ownersAuthorized1[0] = owner;
+        ownersAuthorized1[1] = owner2;
+        assertEq(erc20Authorized.getOwnersList(address(customToken1), authorized1), ownersAuthorized1);
+        address[] memory ownersAuthorized2 =  new address[](1);
+        ownersAuthorized2[0] = owner;
+        assertEq(erc20Authorized.getOwnersList(address(customToken1), authorized2), ownersAuthorized2);
+        // Verify owners list is updated after revoking authorization
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+        delete ownersAuthorized1;
+        ownersAuthorized1 =  new address[](1);
+        ownersAuthorized1[0] = owner2;
+        assertEq(erc20Authorized.getOwnersList(address(customToken1), authorized1), ownersAuthorized1);
+    }
+
+    function test_revokeUnauthorized() external
+    {
+        deal(address(customToken1), owner, 50);
+        vm.prank(address(customToken1));
+        vm.expectRevert();
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+    }
+
+    function test_revokeAuthorization() external
+    {
+        deal(address(customToken1), owner, 50);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+        assertTrue(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+
+        // Verify revoke works
+        vm.expectEmit(true, true, false, true);
+        emit IERC20Authorized.RevokeAuthorization(address(customToken1), owner, authorized1);
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+        assertFalse(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+
+        // Verify re-authorization works
+        erc20Authorized.authorize(owner, authorized1, 20);
+        assertTrue(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 20, "Cap should updated after authorizing");
+    }
+
+    function test_revokeTwice() external
+    {
+        deal(address(customToken1), owner, 50);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+        vm.expectRevert();
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+    }
+
+    function test_authorizedOnTwoAddresses() external
+    {
+        deal(address(customToken1), owner, 100);
+        assertEq(customToken1.balanceOf(owner), 100);
+        deal(address(customToken2), owner, 200);
+        assertEq(customToken2.balanceOf(owner), 200);
+
+        // Authorization effects only the customToken it was authorized on
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 100);
+        assertTrue(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+        assertFalse(erc20Authorized.isAuthorized(address(customToken2), owner, authorized1));
+
+        // Cannot revoke authorization from customToken2
+        vm.prank(address(customToken2));
+        vm.expectRevert();
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+
+        // Balance is kept separate
+        vm.prank(address(customToken2));
+        erc20Authorized.authorize(owner, authorized1, 200);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 100, "Cap should updated after authorizing");
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken2), owner, authorized1), 200, "Cap should updated after authorizing");
+
+        // Cannot re-authorization only enabled under the revoked customToken
+        vm.prank(address(customToken1));
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+        assertFalse(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+        assertTrue(erc20Authorized.isAuthorized(address(customToken2), owner, authorized1));
+        vm.prank(address(customToken2));
+        vm.expectRevert();
+        erc20Authorized.authorize(owner, authorized1, 200);
+
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 100);
+        assertTrue(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+        assertTrue(erc20Authorized.isAuthorized(address(customToken2), owner, authorized1));
+
+        // Re-authorization applies only to the customToken specified
+        vm.prank(address(customToken1));
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+        vm.prank(address(customToken2));
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 100);
+        assertTrue(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+        assertFalse(erc20Authorized.isAuthorized(address(customToken2), owner, authorized1));
+    }
+
+    function test_increaseUnauthorized() external
+    {
+        deal(address(customToken1), owner, 100);
+        vm.startPrank(address(customToken1));
+        vm.expectRevert();
+        erc20Authorized.increaseAuthorizedCap(owner, authorized1, 50);
+
+        erc20Authorized.authorize(owner, authorized1, 100);
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+        vm.expectRevert();
+        erc20Authorized.increaseAuthorizedCap(owner, authorized1, 50);
+    }
+
+    function test_decreaseUnauthorized() external
+    {
+        deal(address(customToken1), owner, 100);
+        vm.startPrank(address(customToken1));
+        vm.expectRevert();
+        erc20Authorized.decreaseAuthorizedCap(owner, authorized1, 50);
+        erc20Authorized.authorize(owner, authorized1, 100);
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+        vm.expectRevert();
+        erc20Authorized.decreaseAuthorizedCap(owner, authorized1, 50);
+    }
+
+    function test_increaseEmptyAmount() external
+    {
+        deal(address(customToken1), owner, 100);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+        vm.expectRevert();
+        erc20Authorized.increaseAuthorizedCap(owner, authorized1, 0);
+    }
+
+    function test_decreaseEmptyAmount() external
+    {
+        deal(address(customToken1), owner, 100);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+        vm.expectRevert();
+        erc20Authorized.decreaseAuthorizedCap(owner, authorized1, 0);
+    }
+
+    function test_increaseMoreThanBalance() external
+    {
+        deal(address(customToken1), owner, 100);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+        vm.expectRevert();
+        erc20Authorized.increaseAuthorizedCap(owner, authorized1, 60);
+        // Increase on exact balance is allowed
+        erc20Authorized.increaseAuthorizedCap(owner, authorized1, 50);
+    }
+
+    function test_increaseDecreaseAuthorizedCap() external
+    {
+        deal(address(customToken1), owner, 100);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 10);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 10, "Cap should updated after authorizing");
+        vm.expectEmit(true, true, false, true);
+        emit IERC20Authorized.IncreaseAuthorizedCap(address(customToken1), owner, authorized1, 60);
+        uint256 newCap = erc20Authorized.increaseAuthorizedCap(owner, authorized1, 50);
+        assertEq(newCap, 60, "returned value from increase should be the new cap");
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 60, "Cap should updated after increase");
+        vm.expectEmit(true, true, false, true);
+        emit IERC20Authorized.IncreaseAuthorizedCap(address(customToken1), owner, authorized1, 80);
+        erc20Authorized.increaseAuthorizedCap(owner, authorized1, 20);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 80, "Cap should updated after increase");
+        vm.expectEmit(true, true, false, true);
+        emit IERC20Authorized.DecreaseAuthorizedCap(address(customToken1), owner, authorized1, 30);
+        newCap = erc20Authorized.decreaseAuthorizedCap(owner, authorized1, 50);
+        assertEq(newCap, 30, "returned value from decrease should be the new cap");
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 30, "Cap should updated after decrease");
+        vm.expectEmit(true, true, false, true);
+        emit IERC20Authorized.DecreaseAuthorizedCap(address(customToken1), owner, authorized1, 20);
+        erc20Authorized.decreaseAuthorizedCap(owner, authorized1, 10);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 20, "Cap should updated after decrease");
+    }
+
+    function test_increaseOverflow() external
+    {
+        uint256 maxInt = type(uint256).max;
+        deal(address(customToken1), owner, maxInt);
+        assertEq(customToken1.balanceOf(owner), maxInt);
+
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+        vm.expectEmit(true, true, false, true);
+        emit IERC20Authorized.IncreaseAuthorizedCap(address(customToken1), owner, authorized1, maxInt);
+        uint256 newCap = erc20Authorized.increaseAuthorizedCap(owner, authorized1, maxInt);
+        assertEq(newCap, maxInt, "returned value from increase should be the new cap");
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), maxInt, "Cap should clip overflow to maxInt on increase");
+    }
+
+    function test_decreaseUnderflow() external
+    {
+        uint256 amount = 100;
+        deal(address(customToken1), owner, amount);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, amount / 2);
+        vm.expectEmit(true, true, false, true);
+        emit IERC20Authorized.DecreaseAuthorizedCap(address(customToken1), owner, authorized1, 0);
+        uint256 newCap = erc20Authorized.decreaseAuthorizedCap(owner, authorized1, amount / 2);
+        assertEq(newCap, 0, "returned value from decrease should be the new cap");
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 0, "Cap should decrease");
+    }
+
+    function test_decreaseToZero() external
+    {
+        uint256 amount = 100;
+        deal(address(customToken1), owner, amount);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, amount / 2);
+        erc20Authorized.decreaseAuthorizedCap(owner, authorized1, amount);
+        // Decrease to 0 does not un-authorize
+        assertTrue(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 0, "Cap should updated after decrease");
+        // Can increase/decrease after decrease to 0
+        erc20Authorized.increaseAuthorizedCap(owner, authorized1, amount / 2);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), amount / 2, "Cap should updated after increase");
+        erc20Authorized.decreaseAuthorizedCap(owner, authorized1, amount / 2);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 0, "Cap should updated after decrease");
+    }
+
+    function test_approveForUnauthorized() external
+    {
+        uint256 amount = 100;
+        deal(address(customToken1), owner, amount);
+        vm.prank(address(customToken1));
+        vm.expectRevert();
+        erc20Authorized.approveFor(owner, authorized1, authorized2, amount / 2);
+    }
+
+    function test_approveForInvalidSpender() external
+    {
+        uint256 amount = 100;
+        deal(address(customToken1), owner, amount);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, amount / 2);
+        vm.expectRevert();
+        erc20Authorized.approveFor(owner, authorized1, address(0), amount / 2);
+    }
+
+    function test_approveForSpenderIsOwner() external
+    {
+        uint256 amount = 100;
+        deal(address(customToken1), owner, amount);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, amount / 2);
+        vm.expectRevert();
+        erc20Authorized.approveFor(owner, authorized1, owner, amount / 2);
+    }
+
+    function test_approveForSelfApproval() external
+    {
+        uint256 amount = 100;
+        deal(address(customToken1), owner, amount);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, amount / 2);
+        vm.expectRevert();
+        erc20Authorized.approveFor(owner, authorized1, authorized1, amount / 2);
+    }
+
+    function test_approveForEmptyAmount() external
+    {
+        uint256 amount = 100;
+        deal(address(customToken1), owner, amount);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, amount / 2);
+        vm.recordLogs();
+        vm.expectEmit(true, true, false, true);
+        emit IERC20Authorized.ApproveFor(address(customToken1), owner,  authorized1, authorized2, 0);
+        erc20Authorized.approveFor(owner, authorized1, authorized2, 0);
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        assertEq(entries.length, 2, "Only 2 events should have been emitted");
+    }
+
+    function test_approveForAmountMoreThanCap() external
+    {
+        uint256 amount = 100;
+        deal(address(customToken1), owner, amount);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, amount / 2);
+        vm.expectRevert();
+        erc20Authorized.approveFor(owner, authorized1, authorized2, amount);
+    }
+
+    function test_approveFor() external
+    {
+        uint256 amount = 100;
+        deal(address(customToken1), owner, amount);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, amount);
+        vm.recordLogs();
+        vm.expectEmit(true, true, false, true);
+        emit IERC20Authorized.DecreaseAuthorizedCap(address(customToken1), owner,  authorized1, 3 * amount / 4);
+        vm.expectEmit(true, true, false, true);
+        emit IERC20Authorized.ApproveFor(address(customToken1), owner,  authorized1, authorized2, amount / 4);
+        erc20Authorized.approveFor(owner, authorized1, authorized2, amount / 4);
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        assertEq(entries.length, 4, "Only 4 events should have been emitted");
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 3 * amount / 4, "Cap should updated after approveFor");
+    }
+
+    function test_approveForAllAmount() external
+    {
+        uint256 amount = 100;
+        deal(address(customToken1), owner, amount);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, amount);
+        assertTrue(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+        erc20Authorized.approveFor(owner, authorized1, authorized2, amount);
+        assertTrue(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 0, "Cap should updated after approveFor");
+    }
+
+    function test_approveForSameSpenderTwoAuthorizers() external
+    {
+        deal(address(customToken1), owner, 300);
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 100);
+        erc20Authorized.authorize(owner, authorized2, 200);
+        erc20Authorized.approveFor(owner, authorized1, authorized2, 50);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 50, "Cap should updated after approveFor");
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized2), 200, "Cap should updated after approveFor");
+        erc20Authorized.approveFor(owner, authorized2, authorized1, 170);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 50, "Cap should updated after approveFor");
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized2), 30, "Cap should updated after approveFor");
+    }
+
+    function test_registerClientWorks() external
         {
-            revert ClientNotRegistered(msg.sender);
+            ERC20Authorized newClient = new ERC20Authorized();
+            uint256 fee = erc20Authorized.getRegistrationFee();
+            uint256 authdAmount = erc20Authorized.getRegistrationAuthdAmount();
+            vm.deal(address(newClient), fee);
+            vm.startPrank(address(newClient));
+            vm.expectEmit(true, false, false, true);
+            emit IERC20Authorized.ClientRegistered(address(newClient),  fee, authdAmount);
+            erc20Authorized.registerClient{value: fee}();
+
+            assertTrue(erc20Authorized.isRegisteredClient(address(newClient)));
+            assertEq(erc20Authorized.balanceOf(address(newClient)), authdAmount);
         }
-        _;
+
+    function test_registerClientRevertsIfZeroAddress() external
+        {
+            vm.deal(address(0), 0.01 ether);
+            vm.startPrank(address(0));
+            vm.expectRevert();
+            erc20Authorized.registerClient{value: 0.01 ether}();
+        }
+
+    function test_registerClientRevertsIfAlreadyRegistered() external
+        {
+            vm.deal(address(customToken1), 0.01 ether);
+            vm.startPrank(address(customToken1));
+            vm.expectRevert();
+            erc20Authorized.registerClient{value: 0.01 ether}();
+        }
+
+    function test_registerClientRevertsIfInsufficientFee() external {
+            address client = makeAddr("client");
+            uint256 fee = erc20Authorized.getRegistrationFee();
+            vm.deal(client, fee - 1);
+            vm.prank(client);
+            vm.expectRevert(abi.encodeWithSelector(ERC20AuthorizedErrors.InsufficientRegistrationFee.selector, fee - 1, fee));
+            erc20Authorized.registerClient{value: fee - 1}();
+        }
+
+    function test_isRegisteredClientWorks() external
+        {
+            assertTrue(erc20Authorized.isRegisteredClient(address(customToken1)));
+            assertTrue(erc20Authorized.isRegisteredClient(address(customToken2)));
+
+            ERC20Authorized unregisteredClient = new ERC20Authorized();
+            assertFalse(erc20Authorized.isRegisteredClient(address(unregisteredClient)));
+        }
+
+    function test_revokeClientRegistrationRevertsForNonOwner() external
+    {
+        vm.prank(address(customToken1));
+        vm.expectRevert();
+        erc20Authorized.revokeClientRegistration(address(customToken2));
     }
 
-    /**
-     * Piecewise linear pricing preview.
-     *
-     * remainingWholeTokens is the number of whole AUTHD tokens left in the client pool
-     * (not 18-decimal units).
-     *
-     * Tier 1: 250000 -> 200000 maps 0.00002 ETH -> 0.0004 ETH
-     * Tier 2: 200000 ->  50000 maps 0.0004 ETH -> 0.002 ETH
-     * Tier 3:  50000 ->      0 maps 0.002 ETH -> 0.01 ETH
-     */
-    function previewAuthdRate(uint256 remainingWholeTokens) internal pure returns (uint256) {
-        if (remainingWholeTokens >= 200_000) {
-            return LinearRate.linearRate(
-                remainingWholeTokens,
-                250_000,
-                200_000,
-                0.00002 ether,
-                0.0004 ether
-            );
+    function test_revokeClientRegistrationRevertsIfClientNotRegistered() external
+    {
+        ERC20Authorized unregisteredClient = new ERC20Authorized();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC20AuthorizedErrors.ClientNotRegistered.selector,
+                address(unregisteredClient)
+            )
+        );
+        erc20Authorized.revokeClientRegistration(address(unregisteredClient));
+    }
+
+    function test_revokeClientRegistrationWorks() external
+    {
+        vm.expectEmit(true, false, false, true);
+        emit IERC20Authorized.ClientRegistrationRevoked(address(customToken1));
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        assertFalse(erc20Authorized.isRegisteredClient(address(customToken1)));
+    }
+
+    
+    function test_authorizeRevertsIfClientNotRegistered() external
+        {
+            ERC20Authorized unregisteredClient = new ERC20Authorized();
+
+            deal(address(unregisteredClient), owner, 50);
+
+            vm.prank(address(unregisteredClient));
+            vm.expectRevert();
+            erc20Authorized.authorize(owner, authorized1, 20);
         }
 
-        if (remainingWholeTokens >= 50_000) {
-            return LinearRate.linearRate(
-                remainingWholeTokens,
-                200_000,
-                50_000,
-                0.0004 ether,
-                0.002 ether
-            );
+    function test_increaseAuthorizedCapRevertsIfClientNotRegistered() external
+        {
+            ERC20Authorized unregisteredClient = new ERC20Authorized();
+
+            deal(address(unregisteredClient), owner, 100);
+
+            // even if the storage path exists conceptually, function should fail due to registration modifier
+            vm.prank(address(unregisteredClient));
+            vm.expectRevert();
+            erc20Authorized.increaseAuthorizedCap(owner, authorized1, 20);
         }
 
-        return LinearRate.linearRate(
-            remainingWholeTokens,
-            50_000,
-            0,
-            0.002 ether,
-            0.01 ether
+    function test_decreaseAuthorizedCapRevertsIfClientNotRegistered() external
+        {
+            ERC20Authorized unregisteredClient = new ERC20Authorized();
+
+            deal(address(unregisteredClient), owner, 100);
+
+            vm.prank(address(unregisteredClient));
+            vm.expectRevert();
+            erc20Authorized.decreaseAuthorizedCap(owner, authorized1, 20);
+        }
+
+    function test_approveForRevertsIfClientNotRegistered() external
+        {
+            ERC20Authorized unregisteredClient = new ERC20Authorized();
+
+            deal(address(unregisteredClient), owner, 100);
+
+            vm.prank(address(unregisteredClient));
+            vm.expectRevert();
+            erc20Authorized.approveFor(owner, authorized1, authorized2, 20);
+        }
+
+    function test_withdrawTreasuryWorks() external {
+            address payable treasuryReceiver = payable(makeAddr("treasuryReceiver"));
+
+            vm.deal(address(erc20Authorized), 1 ether);
+
+            uint256 beforeBalance = treasuryReceiver.balance;
+            uint256 treasuryBalance = address(erc20Authorized).balance;
+
+            vm.expectEmit(true, false, false, true, address(erc20Authorized));
+            emit IERC20Authorized.TreasuryWithdrawal(treasuryReceiver, treasuryBalance);
+
+            erc20Authorized.withdrawTreasury(treasuryReceiver);
+
+            assertEq(address(erc20Authorized).balance, 0);
+            assertEq(treasuryReceiver.balance, beforeBalance + treasuryBalance);
+        }
+
+    function test_withdrawTreasuryRevertsIfNotOwner() external
+        {
+            address payable treasuryReceiver = payable(makeAddr("treasuryReceiver"));
+            address notOwner = makeAddr("notOwner");
+
+            vm.prank(notOwner);
+            vm.expectRevert();
+            erc20Authorized.withdrawTreasury(treasuryReceiver);
+        }
+
+    function test_withdrawTreasuryRevertsIfNoBalance() external {
+            address payable treasuryReceiver = payable(makeAddr("treasuryReceiver"));
+
+            vm.deal(address(erc20Authorized), 0);
+
+            vm.expectRevert(bytes("No ETH to withdraw"));
+            erc20Authorized.withdrawTreasury(treasuryReceiver);
+        }
+
+
+
+    function test_revokeClientRegistrationPreventsRevokeAuthorizationWhileRevoked() external
+    {
+        deal(address(customToken1), owner, 100);
+
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        vm.prank(address(customToken1));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC20AuthorizedErrors.ClientNotRegistered.selector,
+                address(customToken1)
+            )
+        );
+        erc20Authorized.revokeAuthorization(owner, authorized1);
+    }
+
+    function test_revokeClientRegistrationPreventsIncreaseAuthorizedCapWhileRevoked() external
+    {
+        deal(address(customToken1), owner, 100);
+
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        vm.prank(address(customToken1));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC20AuthorizedErrors.ClientNotRegistered.selector,
+                address(customToken1)
+            )
+        );
+        erc20Authorized.increaseAuthorizedCap(owner, authorized1, 10);
+    }
+
+    function test_revokeClientRegistrationPreventsDecreaseAuthorizedCapWhileRevoked() external
+    {
+        deal(address(customToken1), owner, 100);
+
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        vm.prank(address(customToken1));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC20AuthorizedErrors.ClientNotRegistered.selector,
+                address(customToken1)
+            )
+        );
+        erc20Authorized.decreaseAuthorizedCap(owner, authorized1, 10);
+    }
+
+    function test_revokeClientRegistrationPreventsApproveForWhileRevoked() external
+    {
+        deal(address(customToken1), owner, 100);
+
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        vm.prank(address(customToken1));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC20AuthorizedErrors.ClientNotRegistered.selector,
+                address(customToken1)
+            )
+        );
+        erc20Authorized.approveFor(owner, authorized1, authorized2, 10);
+    }
+
+    
+
+    function test_revokeClientRegistrationClearsAuthorizationState() external
+    {
+        address owner2 = makeAddr("Owner-address-2");
+        address authorized3 = makeAddr("Authorized-address-3");
+
+        deal(address(customToken1), owner, 200);
+        deal(address(customToken1), owner2, 200);
+
+        vm.startPrank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 50);
+        erc20Authorized.authorize(owner, authorized2, 60);
+        erc20Authorized.authorize(owner2, authorized1, 70);
+        erc20Authorized.authorize(owner2, authorized3, 80);
+        vm.stopPrank();
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        assertFalse(erc20Authorized.isRegisteredClient(address(customToken1)));
+
+        assertFalse(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+        assertFalse(erc20Authorized.isAuthorized(address(customToken1), owner, authorized2));
+        assertFalse(erc20Authorized.isAuthorized(address(customToken1), owner2, authorized1));
+        assertFalse(erc20Authorized.isAuthorized(address(customToken1), owner2, authorized3));
+
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 0);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized2), 0);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner2, authorized1), 0);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner2, authorized3), 0);
+
+        assertEq(erc20Authorized.getAuthorizersList(address(customToken1), owner).length, 0);
+        assertEq(erc20Authorized.getAuthorizersList(address(customToken1), owner2).length, 0);
+        assertEq(erc20Authorized.getOwnersList(address(customToken1), authorized1).length, 0);
+        assertEq(erc20Authorized.getOwnersList(address(customToken1), authorized2).length, 0);
+        assertEq(erc20Authorized.getOwnersList(address(customToken1), authorized3).length, 0);
+    }
+
+    function test_clientCanReregisterWithCleanStateAfterRevocation() external
+    {
+        deal(address(customToken1), owner, 100);
+
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 40);
+
+        erc20Authorized.revokeClientRegistration(address(customToken1));
+
+        uint256 fee = erc20Authorized.getRegistrationFee();
+        vm.deal(address(customToken1), fee);
+        vm.prank(address(customToken1));
+        erc20Authorized.registerClient{value: fee}();
+
+        assertTrue(erc20Authorized.isRegisteredClient(address(customToken1)));
+        assertFalse(erc20Authorized.isAuthorized(address(customToken1), owner, authorized1));
+        assertEq(erc20Authorized.getAuthorizersList(address(customToken1), owner).length, 0);
+        assertEq(erc20Authorized.getOwnersList(address(customToken1), authorized1).length, 0);
+
+        vm.prank(address(customToken1));
+        erc20Authorized.authorize(owner, authorized1, 25);
+
+        address[] memory authorizers = erc20Authorized.getAuthorizersList(address(customToken1), owner);
+        address[] memory owners = erc20Authorized.getOwnersList(address(customToken1), authorized1);
+
+        assertEq(authorizers.length, 1);
+        assertEq(authorizers[0], authorized1);
+        assertEq(owners.length, 1);
+        assertEq(owners[0], owner);
+        assertEq(erc20Authorized.getAuthorizedCap(address(customToken1), owner, authorized1), 25);
+    }
+
+    function test_registerClientUsesLinearRateAmount() external {
+        ERC20Authorized newClient = new ERC20Authorized();
+
+        uint256 fee = erc20Authorized.getRegistrationFee();
+        uint256 authdAmount = erc20Authorized.getRegistrationAuthdAmount();
+
+        vm.deal(address(newClient), fee);
+        vm.startPrank(address(newClient));
+
+        erc20Authorized.registerClient{value: fee}();
+
+        assertEq(
+            erc20Authorized.balanceOf(address(newClient)),
+            authdAmount
         );
     }
 
-    /**
-     * Current ETH price per 1 AUTHD token (1 whole token, not 1 wei of AUTHD).
-     */
-    function getAuthdRate() internal view returns (uint256) {
-        uint256 remainingWholeTokens = clientPoolRemaining;
-        return previewAuthdRate(remainingWholeTokens);
-    }
-
-    /**
-     * ETH fee to register a client based on the current linear AUTHD rate.
-     */
-    function getRegistrationFee() public view returns (uint256) {
-        uint256 dynamicFee = BASE_REGISTRATION_AUTHD_AMOUNT * getAuthdRate();
-
-        if (dynamicFee < REGISTRATION_FEE) {
-            return REGISTRATION_FEE;
-        }
-
-        return dynamicFee;
-    }
-
-    function getRegistrationAuthdAmount() public view returns (uint256) {
-        uint256 rate = getAuthdRate();
-        if (rate == 0) {
-            revert InvalidAmount(rate);
-        }
-
-        return getRegistrationFee() / rate;
-    }
-
-    /**
-     * Register a client token contract so it can use the AUTHD authorization logic.
-     *
-     * Simple capstone model:
-     * - payer sends ETH
-     * - server marks `client` as registered
-     * - server sends a fixed amount of AUTHD to the client address
-     */
-    /**
-     * Register a client token contract.
-     * The caller (client) pays ETH according to the current rate and receives back AUTHD tokens
-     */
-    function registerClient() public payable validAddress(msg.sender) {
-        address client = msg.sender;
-        if (isRegisteredClient[client])
-        {
-            revert AlreadyRegistered(client);
-        }
-        uint256 fee = getRegistrationFee();
-        uint256 registrationAuthdAmount = getRegistrationAuthdAmount();
-        if (msg.value < fee)
-        {
-            revert InsufficientRegistrationFee(msg.value, fee);
-        }
-        if (clientPoolRemaining < registrationAuthdAmount)
-        {
-            revert ClientPoolExhuasted(clientPoolRemaining, registrationAuthdAmount);
-        }
-        if (balanceOf(address(this)) < registrationAuthdAmount)
-        {
-            revert InsufficientAuthdSupply(balanceOf(address(this)), registrationAuthdAmount);
-        }
-        isRegisteredClient[client] = true;
-        clientPoolRemaining -= registrationAuthdAmount;
-
-        _transfer(address(this), client, registrationAuthdAmount);
-
-        emit ClientRegistered(client, msg.value, registrationAuthdAmount);
-    }
-
-    function _clearClientAuthorizationState(address client) internal {
-        AuthorizationClient storage clientAuth = authorizationData[client];
-        address[] memory owners = clientAuth.allOwners;
-
-        for (uint256 i = 0; i < owners.length; i++) {
-            address owner = owners[i];
-            address[] memory authorizers = clientAuth.authorizationOwner[owner].authorizers;
-
-            for (uint256 j = 0; j < authorizers.length; j++) {
-                address authorizer = authorizers[j];
-                delete clientAuth.authorizationOwner[owner].authorizationInfo[authorizer];
-                clientAuth.delegatedBy[authorizer].removeAddressFromArray(owner);
-            }
-
-            delete clientAuth.authorizationOwner[owner].authorizers;
-            clientAuth.isOwnerListed[owner] = false;
-        }
-
-        delete clientAuth.allOwners;
-    }
-
-    /**
-     * Optional admin function in case you want to disable a client later.
-     */
-    function revokeClientRegistration(address client) external onlyOwner
-    {
-        if (!isRegisteredClient[client])
-        {
-            revert ClientNotRegistered(client);
-        }
-        _clearClientAuthorizationState(client);
-        isRegisteredClient[client] = false;
-        emit ClientRegistrationRevoked(client);
-    }
-
-    /**
-     * Withdraw ETH accumulated from client registrations.
-     */
-    function withdrawTreasury(address payable to) external onlyOwner validAddress(to)
-    {
-        uint256 amount = address(this).balance;
-        require(amount > 0, "No ETH to withdraw");
-        (bool ok, ) = to.call{value: amount}("");
-        require(ok, "ETH withdrawal failed");
-
-        emit TreasuryWithdrawal(to, amount);
-    }
-
-    receive() external payable {}
-
-    /*
-     * -----------------------------
-     * Authorization server-side logic
-     * -----------------------------
-     */
-
-    modifier validCapAmount(uint256 capAmount)
-    {
-        if (capAmount == 0)
-        {
-            revert InvalidAmount(capAmount);
-        }
-        _;
-    }
-
-    modifier validAddress(address client)
-    {
-        require(client != address(0), "InvalidAddress");
-        _;
-    }
-
-    modifier currentlyAuthorized(address client, address owner, address authorized)
-    {
-        if (!isAuthorized(client, owner, authorized))
-        {
-            revert NotCurrentlyAuthorized(client, owner, authorized);
-        }
-        _;
-    }
-
-    function authorize(address owner, address authorized, uint256 cap) public
-        onlyRegisteredClient
-        validAddress(owner)
-        validAddress(authorized)
-    {
-        if (owner == authorized) {
-            revert SelfAuthorizationProhibited();
-        }
-
-        if (isAuthorized(msg.sender, owner, authorized)) {
-            revert AlreadyAuthorized(msg.sender, owner, authorized);
-        }
-
-        if (IERC20(msg.sender).balanceOf(owner) < cap) {
-            revert InsufficientOwnerBalance(msg.sender, owner, cap);
-        }
-        AuthorizationClient storage clientAuth = authorizationData[msg.sender];
-        AuthorizationOwner storage ownerAuth = clientAuth.authorizationOwner[owner];
-
-        if (!clientAuth.isOwnerListed[owner]) {
-            clientAuth.allOwners.push(owner);
-            clientAuth.isOwnerListed[owner] = true;
-        }
-
-        ownerAuth.authorizationInfo[authorized].isAuthorized = true;
-        ownerAuth.authorizationInfo[authorized].cap = cap;
-        ownerAuth.authorizers.push() = authorized;
-        clientAuth.delegatedBy[authorized].push() = owner;
-        emit Authorization(msg.sender, owner, authorized, cap);
-    }
-
-    function getAuthorizedCap(address client, address owner, address authorized) view public returns (uint256)
-    {
-        return authorizationData[client].authorizationOwner[owner].authorizationInfo[authorized].cap;
-    }
-
-    function getAuthorizersList(address client, address owner) public view returns (address[] memory)
-    {
-        return authorizationData[client].authorizationOwner[owner].authorizers;
-    }
-
-    function getOwnersList(address client, address authorized) public view returns (address[] memory)
-    {
-        return authorizationData[client].delegatedBy[authorized];
-    }
-
-    function _getIncreasedCap(uint256 currentCap, uint256 addedCapRequested) internal pure
-        returns (uint256 newCap)
-    {
-        unchecked
-        {
-            newCap = currentCap + addedCapRequested;
-            if (newCap < currentCap)
-            {
-                // Overflow occurred
-                newCap = type(uint256).max;
-            }
-        }
-    }
-
-    function increaseAuthorizedCap(address owner, address authorized, uint256 addedCap) public
-        onlyRegisteredClient
-        currentlyAuthorized(msg.sender, owner, authorized)
-        validCapAmount(addedCap)
-        returns (uint256 newCap)
-    {
-        uint256 currentCap = authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].cap;
-        newCap = _getIncreasedCap(currentCap, addedCap);
-        if (IERC20(msg.sender).balanceOf(owner) < newCap)
-        {
-           revert InsufficientOwnerBalance(msg.sender, owner, newCap);
-        }
-        authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].cap = newCap;
-        emit IncreaseAuthorizedCap(msg.sender, owner, authorized, newCap);
-    }
-
-    function _getDecreasedCap(uint256 currentCap, uint256 subtractedCapRequested) internal pure
-    returns (uint256 newCap, uint256 actualSubtractedCap)
-
-    {
-        if (subtractedCapRequested >= currentCap)
-
-        {
-            // Underflow clips at 0
-            newCap = 0;
-            actualSubtractedCap = currentCap;
-        }
-        else
-        {
-            unchecked
-            {
-            // currentCap >= subtractedCap, no underflow
-                newCap = currentCap - subtractedCapRequested;
-                actualSubtractedCap = subtractedCapRequested;
-            }
-        }
-    }
-
-    function _decreaseAuthorizedCap(address owner, address authorized, uint256 subtractedCap) internal
-        returns (uint256 newCap, uint256 approvedAmount)
-    {
-        uint256 currentCap = authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].cap;
-        (newCap, approvedAmount) = _getDecreasedCap(currentCap, subtractedCap);
-        authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].cap = newCap;
-        emit DecreaseAuthorizedCap(msg.sender, owner, authorized, newCap);
-    }
-
-    function decreaseAuthorizedCap(address owner, address authorized, uint256 subtractedCap) public
-        onlyRegisteredClient
-        currentlyAuthorized(msg.sender, owner, authorized)
-        validCapAmount(subtractedCap)
-        returns (uint256 newCap)
-    {
-        (newCap, ) = _decreaseAuthorizedCap(owner, authorized, subtractedCap);
-    }
-
-    function isAuthorized(address client, address owner, address authorized) public view returns (bool)
-    {
-        return authorizationData[client].authorizationOwner[owner].authorizationInfo[authorized].isAuthorized;
-    }
-
-    function revokeAuthorization(address owner, address authorized) public onlyRegisteredClient
-        currentlyAuthorized(msg.sender, owner, authorized)
-    {
-        AuthorizationClient storage clientAuth = authorizationData[msg.sender];
-
-        delete clientAuth.authorizationOwner[owner].authorizationInfo[authorized];
-        clientAuth.authorizationOwner[owner].authorizers.removeAddressFromArray(authorized);
-        clientAuth.delegatedBy[authorized].removeAddressFromArray(owner);
-
-        if (clientAuth.authorizationOwner[owner].authorizers.length == 0) {
-            clientAuth.allOwners.removeAddressFromArray(owner);
-            clientAuth.isOwnerListed[owner] = false;
-        }
-
-        emit RevokeAuthorization(msg.sender, owner, authorized);
-    }
-
-    // Approval itself done by client, it is possible to approve on more than owner's current balance, as per ERC20's
-    // approve() method
-    function approveFor(address owner, address authorized, address spender, uint256 amount) public
-        onlyRegisteredClient
-        currentlyAuthorized(msg.sender, owner, authorized)
-        validAddress(spender)
-        returns (uint256)
-    {
-        if ((spender == authorized) || (spender == owner))
-        {
-            revert InvalidSpender(spender);
-        }
-        uint256 currentCap = authorizationData[msg.sender].authorizationOwner[owner].authorizationInfo[authorized].cap;
-        if (currentCap < amount)
-        {
-            revert InsufficientAuthorizedCap(
-                msg.sender, owner, authorized, currentCap, amount);
-        }
-        if (amount > 0)
-        {
-            _decreaseAuthorizedCap(owner, authorized, amount);
-        }
-        emit ApproveFor(msg.sender, owner, authorized, spender, amount);
-        return amount;
-    }
 }
