@@ -1,0 +1,107 @@
+export const customClientAbi = [
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'name',
+    inputs: [],
+    outputs: [{ name: '', type: 'string' }],
+  },
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'symbol',
+    inputs: [],
+    outputs: [{ name: '', type: 'string' }],
+  },
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'decimals',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint8' }],
+  },
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'balanceOf',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'getRegistrationFee',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'isRegisteredClient',
+    inputs: [],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+  {
+    type: 'function',
+    stateMutability: 'payable',
+    name: 'registerClient',
+    inputs: [],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    stateMutability: 'nonpayable',
+    name: 'buyTokens',
+    inputs: [{ name: 'amount', type: 'uint256' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    stateMutability: 'nonpayable',
+    name: 'authorize',
+    inputs: [
+      { name: 'authorized', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    stateMutability: 'nonpayable',
+    name: 'increaseAuthorizedCap',
+    inputs: [
+      { name: 'authorized', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    stateMutability: 'nonpayable',
+    name: 'decreaseAuthorizedCap',
+    inputs: [
+      { name: 'authorized', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    stateMutability: 'nonpayable',
+    name: 'revokeAuthorization',
+    inputs: [{ name: 'authorized', type: 'address' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    stateMutability: 'nonpayable',
+    name: 'approveFor',
+    inputs: [
+      { name: 'owner', type: 'address' },
+      { name: 'to', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+] as const;
