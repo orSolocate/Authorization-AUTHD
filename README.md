@@ -1,69 +1,192 @@
-Authorization extension of ERC20 to enable authorized users to approve on owner's behalf on blockchain network
+<div align="center">
 
-### Project Setup
-- Solidity compiler version: 0.8.28.
-- Framework: Hardhat3 - version 3.1.10.
-- Dependencies:
-  - @openzeppelin/contracts version 5.6.1:
-    To install it:  npm install @openzeppelin/contracts@5.6.1
-  - Typescript 5.8.0, node 22.19.13.
-  - Forge-std assertion library 1.9.7.
-  To install it follow the hardhat3 tutorial just modify the version to 1.9.7:
-  https://hardhat.org/docs/tutorial/assertions-library
+# Authorization-AUTHD
 
-### Project Logic
+### ERC-20 Token Authorization Protocol
 
-The *contracts* folder:
+*Grant delegates the power to approve token transfers on your behalf — fully on-chain, fully auditable.*
 
-#### Interfaces/IERC20Authorized.sol
+[![Solidity](https://img.shields.io/badge/Solidity-0.8.28-363636?style=for-the-badge&logo=solidity)](https://soliditylang.org)
+[![Hardhat](https://img.shields.io/badge/Hardhat-3.1.10-FFF100?style=for-the-badge&logo=hardhat)](https://hardhat.org)
+[![OpenZeppelin](https://img.shields.io/badge/OpenZeppelin-5.6.1-4E5EE4?style=for-the-badge&logo=openzeppelin)](https://openzeppelin.com)
+[![Network](https://img.shields.io/badge/Network-Sepolia-6F4CFF?style=for-the-badge&logo=ethereum)](https://sepolia.etherscan.io)
+[![License](https://img.shields.io/badge/License-MIT-22C55E?style=for-the-badge)](LICENSE)
 
-This file contains an interface for the authorization server (`ERC20Authorized.sol`) which is based on IERC20: includes exposed server functionality and events. Note about security: only registered clients can use the authorization interface (except for ‘view’/read-only functions).
+<br/>
 
-#### Lib/AddressArrayUtills.sol
+[**Live Demo**](https://sepolia.etherscan.io/address/0x610d238a77821229abae94df738da97811ea014a) · [**Server Contract**](https://sepolia.etherscan.io/address/0xfeb91ced20b008f6f5bebc9189ec7837894584a1) · [**Client Contract**](https://sepolia.etherscan.io/address/0x610d238a77821229abae94df738da97811ea014a)
 
-Includes utility functions to add and remove elements from an array of solidity addresses.
+</div>
 
-#### Lib/LinearRate.sol
+---
 
-Includes a mathematical utility function.
+## What Is This?
 
-#### ERC20Authorized.sol
+Authorization-AUTHD extends the ERC-20 standard to introduce **structured, capped delegation**. Instead of a simple unlimited allowance, an owner can authorize a delegate with a hard cap — the delegate can then approve token transfers on the owner's behalf, but never beyond what they were granted.
 
-The authorization server. Contains implementation of IERC20Authorized and ERC20AuthorizedErrors and based on ERC20 and Ownable. Includes storage states and implementation of server functionalities (the light green areas on the first page of the whitepaper).
+Think of it as a **limited power of attorney for ERC-20 tokens**.
 
-#### ERC20AuthorizedClient.sol
+```
+Owner ──authorize(delegate, cap)──► CustomClient ──► AuthorizedToken Server
+                                                              │
+Delegate ──approveFor(owner, spender, amount)──► CustomClient ┘
+                                                (enforces cap ≥ amount)
+```
 
-The authorization client. Contains abstract implementation of a client (the pink square in the whitepaper first page), to be adapted by an ERC20 based contract that would be a specific client. Acts as a proxy to send requests and receive information from the authorization server and modifies the client's storage states accordingly. Note about security: We avoid reentrancy in the client by calling all state changes before calling the client in all public functions. Only registered clients can call the server, and so users will only use client interface to use authorization features. The logic is per the whitepaper requirements, but extensive details will follow in the project's final report.
+---
 
-#### ERC20AuthorizedErrors.sol
+## Architecture
 
-Contains a contract that includes errors associated with the authorization server with explanation for each error.
+The system is composed of two contracts:
 
-#### CustomClient.sol
+| Contract | Role |
+|----------|------|
+| `ERC20Authorized.sol` | Authorization server — stores caps, enforces rules, emits events |
+| `ERC20AuthorizedClient.sol` | Abstract client — proxies calls to the server, manages local ERC-20 state |
+| `CustomClient.sol` | Concrete demo client — adds `buyTokens()` for testnet use |
 
-A realization of a client based on a real ERC20 token, with the required functionality to buy tokens and perform authorization scenarios for demo purposes.
+> **Key design:** Only registered clients can call the server's state-changing functions. Your wallet always talks to the client, never the server directly.
 
-To compile the source code: `npx hardhat build`
+---
 
-### Security considerations
-1. All client public functions use the best practice to avoid reentrancy (when calling the server) by modifying all internal states before an external call to the server is made.
-2. Any real client that would adapt/inherit the client code would use the hardcoded address of the authorization server (it is part of the documentation of our dApp, like other service protocols e.g. ChainLink).  This prevents a malicious server pretending to be the authorization server and gives the client false information.
-3. The server restricts all its non-view public functionality to registered clients only. This prevents any malicious actor from calling server interface function and modifying its storage state.
-4. We also reserved some admin functionalities that enhance security like revoking a registered client, in cases that a suspicious client activity is observed and the authorization server wants to prevent it. The last feature was not part of the original proposal, but we decided to add it because it introduces more security into our dApp.
+## Security Model
 
-### Tests
-The *test* folder:
+- **Reentrancy protection** — all internal state changes happen *before* any external server call in every public function
+- **Hardcoded server address** — clients immutably bind to the server at deploy time, preventing spoofing
+- **Client-only server access** — unregistered callers cannot modify server state
+- **Admin revocation** — the server owner can revoke suspicious clients, halting their ability to issue new authorizations
 
-#### ERC20Authorized.t.sol
+---
 
-Unit-test for the authorization server. Tests the server interface, events and errors calling the server functions directly by another contract who acts like a client. To keep this README short, we will provide details on each tests case in the final report.
+## Project Structure
 
-#### DemoClient.sol
+```
+contracts/
+├── interfaces/
+│   └── IERC20Authorized.sol      # Server interface + events
+├── lib/
+│   ├── AddressArrayUtils.sol     # Address array helpers
+│   └── LinearRate.sol            # Math utility
+├── ERC20Authorized.sol           # Authorization server
+├── ERC20AuthorizedClient.sol     # Abstract client
+├── ERC20AuthorizedErrors.sol     # Shared custom errors
+└── CustomClient.sol              # Demo client (Sepolia)
 
-A realization of a client implementing ERC20AuthorizedClient to be used in client unit-tests.
+test/
+├── ERC20Authorized.t.sol         # Server unit tests
+├── ERC20AuthorizedClient.t.sol   # Client unit tests
+└── DemoClient.sol                # Test client implementation
 
-#### ERC20AuthorizedClient.t.sol
+frontend/
+└── src/                          # React + wagmi demo UI
+```
 
-Unit-test for the authorized client. Tests the client interface with the client, including the approve logic in the client, authorization related events and errors calling authorization function from the client. To keep this README short, we will provide details on each tests case in the final report.
+---
 
-To run all tests: `npx hardhat test`
+## Getting Started
+
+### Prerequisites
+
+| Tool | Version |
+|------|---------|
+| Node.js | 22.19.13 |
+| TypeScript | 5.8.0 |
+| Hardhat | 3.1.10 |
+
+### Install
+
+```bash
+# Clone the repo
+git clone https://github.com/orSolocate/Authorization-AUTHD
+cd Authorization-AUTHD
+
+# Install dependencies
+npm install
+
+# Install OpenZeppelin contracts
+npm install @openzeppelin/contracts@5.6.1
+
+# Install Forge-std assertion library (follow Hardhat 3 tutorial, pin to v1.9.7)
+# https://hardhat.org/docs/tutorial/assertions-library
+```
+
+### Build
+
+```bash
+npx hardhat build
+```
+
+### Test
+
+```bash
+npx hardhat test
+```
+
+### Run the Frontend Demo
+
+```bash
+cd frontend
+cp .env.example .env   # fill in your RPC URL and contract addresses
+npm install
+npm run dev
+```
+
+---
+
+## Demo Flow
+
+The Sepolia demo walks through the full authorization lifecycle:
+
+```
+1. registerClient()          — pay 0.01 ETH, register with the server
+2. buyTokens(10)             — mint CUST tokens to your wallet
+3. authorize(delegate, cap)  — grant a delegate a spending cap
+4. approveFor(owner,         — delegate approves a spender (uses cap)
+              spender, amt)
+5. transferFrom(...)         — spender pulls tokens using the allowance
+6. increaseAuthorizedCap()   — owner raises the delegate's cap
+7. revokeAuthorization()     — owner revokes the delegation entirely
+```
+
+---
+
+## Deployed Contracts (Sepolia)
+
+| Contract | Address |
+|----------|---------|
+| AuthorizedToken (Server) | [`0xfEB91CED...584a1`](https://sepolia.etherscan.io/address/0xfeb91ced20b008f6f5bebc9189ec7837894584a1) |
+| CustomClient | [`0x610D238A...014A`](https://sepolia.etherscan.io/address/0x610d238a77821229abae94df738da97811ea014a) |
+
+---
+
+## Tests
+
+| Test File | Coverage |
+|-----------|----------|
+| `ERC20Authorized.t.sol` | Server interface, events, errors — direct contract calls |
+| `ERC20AuthorizedClient.t.sol` | Client interface, approve logic, authorization events and errors |
+
+```bash
+npx hardhat test
+```
+
+---
+
+## Dependencies
+
+```json
+{
+  "@openzeppelin/contracts": "5.6.1",
+  "hardhat": "3.1.10",
+  "typescript": "5.8.0",
+  "forge-std": "1.9.7"
+}
+```
+
+---
+
+<div align="center">
+
+Built on Ethereum · Sepolia Testnet · Solidity 0.8.28
+
+</div>
