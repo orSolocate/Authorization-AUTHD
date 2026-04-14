@@ -31,6 +31,7 @@ export const ClientSetupActions = ({ onSuccess }: Props) => {
         address: env.customClientAddress,
         abi: customClientAbi,
         functionName: 'isRegisteredClient',
+        // No args — custom client checks msg.sender internally
       },
       {
         address: env.customClientAddress,
@@ -40,7 +41,7 @@ export const ClientSetupActions = ({ onSuccess }: Props) => {
     ],
     query: {
       staleTime: 10_000,
-      enabled: true,
+      enabled: Boolean(address),
     },
   });
 
@@ -69,16 +70,6 @@ export const ClientSetupActions = ({ onSuccess }: Props) => {
 
     await ensureSepolia();
 
-    console.log('registerClient debug', {
-      account: address,
-      chainId,
-      client: env.customClientAddress,
-      server: env.serverAddress,
-      feeWei: fee.toString(),
-      feeEth: formatEther(fee),
-    });
-
-    // This gives a MUCH better error than writeContract alone.
     const simulation = await publicClient.simulateContract({
       address: env.customClientAddress,
       abi: customClientAbi,
@@ -86,8 +77,6 @@ export const ClientSetupActions = ({ onSuccess }: Props) => {
       value: fee,
       account: address,
     });
-
-    console.log('simulation ok', simulation);
 
     const hash = await write.writeContractAsync(simulation.request);
     console.log('tx hash', hash);

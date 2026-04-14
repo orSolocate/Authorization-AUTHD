@@ -33,9 +33,9 @@ export default function App() {
     <div className="page-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Sepolia demo frontend</p>
-          <h1>ERC20 Authorized</h1>
-          <p className="muted">Minimal local demo for your client/server authorization flow.</p>
+          <p className="eyebrow">Demo Frontend</p>
+          <h1>Authorization-AUTHD</h1>
+          <p className="muted">Local Demo For Authorization</p>
         </div>
         <ConnectButton />
       </header>
